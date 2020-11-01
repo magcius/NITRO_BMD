@@ -16,7 +16,18 @@ import * as TXTR from './txtr';
 import * as CMDL from './cmdl';
 import * as ANCS from './ancs';
 import * as CHAR from './char';
+import * as ANIM from './anim';
+import * as EVNT from './evnt';
+import * as CSKR from "./cskr";
+import * as CINF from "./cinf";
 import { InputStream } from './stream';
+
+export const enum ResourceGame {
+    MP1,
+    MP2,
+    MP3,
+    DKCR
+}
 
 type ParseFunc<T> = (stream: InputStream, resourceSystem: ResourceSystem, assetID: string) => T;
 type Resource = any;
@@ -31,6 +42,10 @@ const FourCCLoaders: { [n: string]: ParseFunc<Resource> } = {
     'CMDL': CMDL.parse,
     'ANCS': ANCS.parse,
     'CHAR': CHAR.parse,
+    'ANIM': ANIM.parse,
+    'EVNT': EVNT.parse,
+    'CSKR': CSKR.parse,
+    'CINF': CINF.parse,
 };
 
 interface NameDataAsset {
@@ -67,8 +82,9 @@ function combineBuffers(totalSize: number, buffers: Uint8Array[]): Uint8Array {
 
 export class ResourceSystem {
     private _cache: Map<string, Resource>;
+    private _modelSkins: Map<string, string> = new Map<string, string>();
 
-    constructor(public paks: PAK[], public nameData: NameData | null = null) {
+    constructor(public game: ResourceGame, public paks: PAK[], public nameData: NameData | null = null) {
         this._cache = new Map<string, Resource>();
     }
 
@@ -197,5 +213,13 @@ export class ResourceSystem {
         const inst = loaderFunc(stream, this, assetID);
         this._cache.set(assetID, inst);
         return inst;
+    }
+
+    public registerModelSkin(modelID: string, skinID: string) {
+        this._modelSkins.set(modelID, skinID)
+    }
+
+    public getModelSkin(modelID: string): string | undefined {
+        return this._modelSkins.get(modelID)
     }
 }

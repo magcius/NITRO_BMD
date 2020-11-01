@@ -229,7 +229,7 @@ export function transformVec3Mat4w0(dst: vec3, m: ReadonlyMat4, v: ReadonlyVec3)
 
 const scratchVec3 = vec3.create();
 
-function compareEpsilon(a: number, b: number) {
+export function compareEpsilon(a: number, b: number) {
     return Math.abs(a-b) <= MathConstants.EPSILON*Math.max(1, Math.abs(a), Math.abs(b));
 }
 
@@ -613,4 +613,12 @@ export function vec3QuantizeMajorAxis(dst: vec3, m: vec3): void {
         vec3.set(dst, 0, speed * Math.sign(y), 0);
     else if (Math.abs(z) > Math.abs(y) && Math.abs(z) > Math.abs(x))
         vec3.set(dst, 0, 0, speed * Math.sign(z));
+}
+
+export function square(a: number): number {
+    return a * a
+}
+
+export function randomRange(a: number, b = -a): number {
+    return lerp(a, b, Math.random());
 }

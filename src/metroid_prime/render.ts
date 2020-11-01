@@ -3,7 +3,7 @@ import { vec3, mat4 } from 'gl-matrix';
 
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { nArray, assert } from '../util';
-import { MaterialParams, PacketParams, GXTextureHolder, ColorKind } from '../gx/gx_render';
+import { MaterialParams, PacketParams, GXTextureHolder, ColorKind, u_PosMtxNum } from "../gx/gx_render";
 
 import { MREA, Material, Surface, UVAnimationType, MaterialSet, AreaLight } from './mrea';
 import * as Viewer from '../viewer';
@@ -23,6 +23,13 @@ import { texEnvMtx, computeNormalMatrix } from '../MathHelpers';
 import { GXShapeHelperGfx, GXRenderHelperGfx, GXMaterialHelperGfx } from '../gx/gx_render';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { areaCollisionLineCheck } from './collision';
+import { AnimTreeNode } from "./animation/tree_nodes";
+import { CharAnimTime } from "./animation/char_anim_time";
+import { HierarchyPoseBuilder, PoseAsTransforms } from "./animation/pose_builder";
+import { CSKR } from "./cskr";
+import { ResourceSystem } from "./resource";
+import { CINF } from "./cinf";
+import { AnimSysContext, IMetaAnim } from "./animation/meta_nodes";
 
 const fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStillWrong = mat4.fromValues(
     1, 0,  0, 0,
@@ -102,6 +109,7 @@ class ActorLights {
 
 const viewMatrixScratch = mat4.create();
 const modelMatrixScratch = mat4.create();
+const modelViewMatrixScratch = mat4.create();
 const bboxScratch = new AABB();
 
 class SurfaceData {
@@ -124,7 +132,7 @@ class SurfaceInstance {
         this.materialTextureKey = materialInstance.textureKey;
     }
 
-    public prepareToRender(device: GfxDevice, renderHelper: GXRenderHelperGfx, viewerInput: Viewer.ViewerRenderInput, isSkybox: boolean): void {
+    public prepareToRender(device: GfxDevice, renderHelper: GXRenderHelperGfx, viewerInput: Viewer.ViewerRenderInput, isSkybox: boolean, envelopeMats?: mat4[]): void {
         if (!this.materialInstance.visible)
             return;
 
@@ -153,7 +161,17 @@ class SurfaceInstance {
         this.surfaceData.shapeHelper.setOnRenderInst(renderInst);
         this.materialGroupInstance.setOnRenderInst(device, renderHelper.renderInstManager.gfxRenderCache, renderInst);
 
-        mat4.mul(this.packetParams.u_PosMtx[0], viewMatrix, modelMatrixScratch);
+        const surfaceSkinRules = this.surfaceData.surface.envelopeSkinRules;
+        if (envelopeMats && surfaceSkinRules) {
+            mat4.mul(modelViewMatrixScratch, viewMatrix, modelMatrixScratch);
+            const numSkinRules = Math.min(u_PosMtxNum, surfaceSkinRules.length);
+            for (let i = 0; i < numSkinRules; ++i) {
+                mat4.mul(this.packetParams.u_PosMtx[i], modelViewMatrixScratch, envelopeMats[surfaceSkinRules[i]]);
+            }
+        } else {
+            mat4.mul(this.packetParams.u_PosMtx[0], viewMatrix, modelMatrixScratch);
+        }
+
         this.materialGroupInstance.materialHelper.allocatePacketParamsDataOnInst(renderInst, this.packetParams);
         renderInst.sortKey = setSortKeyDepthKey(renderInst.sortKey, this.materialTextureKey);
 
@@ -436,9 +454,9 @@ export class MREARenderer {
     public needSky: boolean = false;
     public visible: boolean = true;
 
-    constructor(device: GfxDevice, modelCache: ModelCache, cache: GfxRenderCache, public textureHolder: RetroTextureHolder, public name: string, public mrea: MREA) {
+    constructor(device: GfxDevice, modelCache: ModelCache, cache: GfxRenderCache, public textureHolder: RetroTextureHolder, public name: string, public mrea: MREA, resourceSystem: ResourceSystem) {
         this.translateModel(device, cache);
-        this.translateActors(device, cache, modelCache);
+        this.translateActors(device, cache, modelCache, resourceSystem);
     }
 
     private translateModel(device: GfxDevice, cache: GfxRenderCache): void {
@@ -523,13 +541,13 @@ export class MREARenderer {
         }
     }
 
-    private translateActors(device: GfxDevice, cache: GfxRenderCache, modelCache: ModelCache): void {
+    private translateActors(device: GfxDevice, cache: GfxRenderCache, modelCache: ModelCache, resourceSystem: ResourceSystem): void {
         for (let i = 0; i < this.mrea.scriptLayers.length; i++) {
             const scriptLayer = this.mrea.scriptLayers[i];
 
             for (let j = 0; j < scriptLayer.entities.length; j++) {
                 const ent = scriptLayer.entities[j];
-                const model = ent.getRenderModel();
+                const [model, skel, metaAnim, animSysContext] = ent.getRenderModel(resourceSystem);
 
                 if (model !== null) {
                     const aabb = new AABB();
@@ -537,7 +555,7 @@ export class MREARenderer {
 
                     const actorLights = new ActorLights(aabb, ent.lightParams, this.mrea);
                     const cmdlData = modelCache.getCMDLData(device, this.textureHolder, cache, model);
-                    const cmdlRenderer = new CMDLRenderer(device, this.textureHolder, actorLights, ent.name, ent.modelMatrix, cmdlData);
+                    const cmdlRenderer = new CMDLRenderer(device, this.textureHolder, actorLights, ent.name, ent.modelMatrix, cmdlData, model.cskr, skel, metaAnim, animSysContext);
                     const actor = new Actor(ent, cmdlRenderer);
                     this.actors.push(actor);
                 }
@@ -640,8 +658,11 @@ export class CMDLRenderer {
     public visible: boolean = true;
     public isSkybox: boolean = false;
     public modelMatrix: mat4 = mat4.create();
+    private animTreeNode?: AnimTreeNode;
+    private poseBuilder?: HierarchyPoseBuilder;
+    private envelopeMats?: mat4[];
 
-    constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData) {
+    constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData, public cskr?: CSKR, skel?: CINF, public metaAnim?: IMetaAnim, public animSysContext?: AnimSysContext) {
         const materialSet = this.cmdlData.cmdl.materialSets[0];
 
         // First, create our group commands. These will store UBO buffer data which is shared between
@@ -673,6 +694,12 @@ export class CMDLRenderer {
 
         if (modelMatrix !== null)
             mat4.copy(this.modelMatrix, modelMatrix);
+
+        if (skel)
+            this.poseBuilder = new HierarchyPoseBuilder(skel);
+
+        if (this.cskr)
+            this.envelopeMats = nArray(this.cskr.skinRules.length, () => mat4.create());
     }
 
     public setVisible(visible: boolean): void {
@@ -683,6 +710,30 @@ export class CMDLRenderer {
         if (!this.visible)
             return;
 
+        if (this.animSysContext && this.metaAnim && this.poseBuilder && this.cskr) {
+            if (!this.animTreeNode) {
+                this.animTreeNode = this.metaAnim.GetAnimationTree(this.animSysContext);
+            }
+
+            this.animTreeNode.AdvanceView(new CharAnimTime(viewerInput.deltaTime / 1000));
+            const simp = this.animTreeNode.Simplified();
+            if (simp)
+                this.animTreeNode = simp as AnimTreeNode;
+
+            const pose = this.poseBuilder.BuildFromAnimRoot(this.animTreeNode);
+
+            const skinRules = this.cskr.skinRules;
+            for (let i = 0; i < skinRules.length; ++i) {
+                const skinRule = skinRules[i];
+                const envMat = this.envelopeMats![i];
+                envMat.fill(0);
+                for (const weight of skinRule.weights) {
+                    const mat = pose.get(weight.boneId) as mat4;
+                    mat4.multiplyScalarAndAdd(envMat, envMat, mat, weight.weight);
+                }
+            }
+        }
+
         const templateRenderInst = renderHelper.renderInstManager.pushTemplateRenderInst();
         templateRenderInst.filterKey = this.isSkybox ? RetroPass.SKYBOX : RetroPass.MAIN;
 
@@ -690,7 +741,7 @@ export class CMDLRenderer {
             if (this.materialGroupInstances[i] !== undefined)
                 this.materialGroupInstances[i].prepareToRender(renderHelper.renderInstManager, viewerInput, this.modelMatrix, this.isSkybox, this.actorLights, OpaqueBlack);
         for (let i = 0; i < this.surfaceInstances.length; i++)
-            this.surfaceInstances[i].prepareToRender(device, renderHelper, viewerInput, this.isSkybox);
+            this.surfaceInstances[i].prepareToRender(device, renderHelper, viewerInput, this.isSkybox, this.envelopeMats);
 
         renderHelper.renderInstManager.popTemplateRenderInst();
     }

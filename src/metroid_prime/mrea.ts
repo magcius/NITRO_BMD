@@ -1,24 +1,36 @@
 
 // Implements Retro's MREA format as seen in Metroid Prime 1.
 
-import * as GX_Material from '../gx/gx_material';
-import * as GX from '../gx/gx_enum';
+import * as GX_Material from "../gx/gx_material";
+import * as GX from "../gx/gx_enum";
+import { AttrType } from "../gx/gx_enum";
 
-import * as Script from './script';
-import * as Collision from './collision';
-import { InputStream } from './stream'
-import { TXTR } from './txtr';
+import * as Script from "./script";
+import * as Collision from "./collision";
+import { InputStream } from "./stream";
+import { TXTR } from "./txtr";
 
 import { ResourceSystem } from "./resource";
-import { assert, align, assertExists } from "../util";
-import ArrayBufferSlice from '../ArrayBufferSlice';
-import { compileVtxLoaderMultiVat, GX_VtxDesc, GX_VtxAttrFmt, GX_Array, LoadedVertexData, LoadedVertexLayout, getAttributeByteSize } from '../gx/gx_displaylist';
-import { mat4, vec3 } from 'gl-matrix';
-import * as Pako from 'pako';
-import { decompress as lzoDecompress } from '../Common/Compression/LZO';
-import { AABB } from '../Geometry';
-import { colorFromRGBA8, Color, colorNewFromRGBA, colorNewCopy, TransparentBlack } from '../Color';
-import { MathConstants } from '../MathHelpers';
+import { align, assert, assertExists } from "../util";
+import ArrayBufferSlice from "../ArrayBufferSlice";
+import {
+    compileVtxLoaderMultiVat,
+    getAttributeByteSize,
+    GX_Array,
+    GX_VtxAttrFmt,
+    GX_VtxDesc,
+    LoadedVertexData,
+    LoadedVertexLayout
+} from "../gx/gx_displaylist";
+import { mat4, vec3 } from "gl-matrix";
+import * as Pako from "pako";
+import { decompress as lzoDecompress } from "../Common/Compression/LZO";
+import { AABB } from "../Geometry";
+import { Color, colorFromRGBA8, colorNewCopy, colorNewFromRGBA, TransparentBlack } from "../Color";
+import { MathConstants } from "../MathHelpers";
+import { CSKR, SkinRule } from "./cskr";
+import { Endianness, getSystemEndianness } from "../endian";
+import { u_PosMtxNum } from "../gx/gx_render";
 
 export interface MREA {
     materialSet: MaterialSet;
@@ -474,6 +486,7 @@ export interface Surface {
     loadedVertexData: LoadedVertexData;
     loadedVertexLayout: LoadedVertexLayout;
     worldModelIndex: number;
+    envelopeSkinRules?: number[];
 }
 
 export interface WorldModel {
@@ -561,7 +574,7 @@ function parseWorldModels_MP3(stream: InputStream, worldModelCount: number, wobj
     return worldModels;
 }
 
-function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: number, posSectionOffs: number, nrmSectionOffs: number, clrSectionOffs: number, uvfSectionOffs: number, uvsSectionOffs: number | null, sectionOffsTable: number[], worldModelIndex: number, materialSet: MaterialSet, isEchoes: boolean): [Surface[], number] {
+function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: number, posSectionOffs: number, nrmSectionOffs: number, clrSectionOffs: number, uvfSectionOffs: number, uvsSectionOffs: number | null, sectionOffsTable: number[], worldModelIndex: number, materialSet: MaterialSet, isEchoes: boolean, cskr?: CSKR): [Surface[], number] {
     function fillVatFormat(nrmType: GX.CompType, tex0Type: GX.CompType, compShift: number): GX_VtxAttrFmt[] {
         const vatFormat: GX_VtxAttrFmt[] = [];
         vatFormat[GX.Attr.POS] = { compCnt: GX.CompCnt.POS_XYZ, compType: GX.CompType.F32, compShift };
@@ -621,6 +634,13 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             vcd[format.vtxAttrib] = { type: format.type, enableOutput: (format.mask <= 0x00FFFFFF) };
         }
 
+        // If MP1 and a CSKR is available, generate PNMTXIDX and TEX6MTXIDX
+        const generateMtxIdxs = !isEchoes && cskr;
+        if (generateMtxIdxs) {
+            vcd[GX.Attr.PNMTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
+            //vcd[GX.Attr.TEX6MTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
+        }
+
         // GX_VTXFMT0 | GX_VA_NRM = GX_F32
         // GX_VTXFMT1 | GX_VA_NRM = GX_S16
         // GX_VTXFMT2 | GX_VA_NRM = GX_S16
@@ -658,11 +678,49 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
 
         const loadedVertexData = vtxLoader.runVertices(vtxArrays, dlData);
 
+        let envelopeSkinRules: number[] | undefined;
+        if (generateMtxIdxs) {
+            const littleEndian = getSystemEndianness() === Endianness.LITTLE_ENDIAN;
+            const vertexStride = loadedVertexLayout.vertexBufferStrides[0];
+            const pnMtxIdxOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
+            const vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
+
+            const skinToVerticesMap = new Map<number, number[]>();
+            const overflowVertices = [];
+            for (let i = 0; i < loadedVertexData.totalVertexCount; ++i) {
+                const posIdx = vertexDataView.getFloat32(vertexStride * i + pnMtxIdxOffs, littleEndian);
+                const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
+
+                let skinVertices = skinToVerticesMap.get(skinIdx);
+                if (!skinVertices) {
+                    skinVertices = [];
+                    skinToVerticesMap.set(skinIdx, skinVertices);
+                }
+                if (skinToVerticesMap.size > u_PosMtxNum) {
+                    overflowVertices.push(i);
+                    continue;
+                }
+                skinVertices.push(i);
+            }
+
+            if (overflowVertices.length > 0) {
+                console.warn(`unable to skin ${overflowVertices.length} vertices - out of matrices`);
+            }
+
+            envelopeSkinRules = [];
+            for (const [skinIdx, skinVertices] of skinToVerticesMap) {
+                for (const vertIdx of skinVertices)
+                    vertexDataView.setFloat32(vertexStride * vertIdx + pnMtxIdxOffs, envelopeSkinRules.length, littleEndian);
+                envelopeSkinRules.push(skinIdx)
+            }
+        }
+
         const surface: Surface = {
             materialIndex,
             worldModelIndex,
             loadedVertexData,
             loadedVertexLayout,
+            envelopeSkinRules,
         };
         surfaces.push(surface);
 
@@ -742,7 +800,7 @@ function parseSurfaces_DKCR(stream: InputStream, surfaceCount: number, sectionIn
     return [surfaces, sectionIndex];
 }
 
-export function parseGeometry(stream: InputStream, materialSet: MaterialSet, sectionOffsTable: number[], hasPosShort: boolean, hasUVShort: boolean, isEchoes: boolean, isDKCR: boolean, sectionIndex: number, worldModelIndex: number): [Geometry, number] {
+export function parseGeometry(stream: InputStream, materialSet: MaterialSet, sectionOffsTable: number[], hasPosShort: boolean, hasUVShort: boolean, isEchoes: boolean, isDKCR: boolean, sectionIndex: number, worldModelIndex: number, cskr?: CSKR): [Geometry, number] {
     const posSectionOffs = sectionOffsTable[sectionIndex++];
     const nrmSectionOffs = sectionOffsTable[sectionIndex++];
     const clrSectionOffs = sectionOffsTable[sectionIndex++];
@@ -758,7 +816,7 @@ export function parseGeometry(stream: InputStream, materialSet: MaterialSet, sec
     if (isDKCR) {
         [surfaces, sectionIndex] = parseSurfaces_DKCR(stream, surfaceCount, sectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, hasPosShort);
     } else {
-        [surfaces, sectionIndex] = parseSurfaces(stream, surfaceCount, sectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, isEchoes);
+        [surfaces, sectionIndex] = parseSurfaces(stream, surfaceCount, sectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, isEchoes, cskr);
     }
 
     const geometry: Geometry = { surfaces };

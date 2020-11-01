@@ -464,9 +464,12 @@ function translateVatLayout(vatFormat: GX_VtxAttrFmt[], vcd: GX_VtxDesc[]): VatL
 
         const srcIndexComponentCount = getIndexNumComponents(vtxAttrib, vtxAttrFmt);
 
-        // MTXIDX entries can only be DIRECT if they exist.
+        // MTXIDX entries can only be DIRECT or GENERATED_MTXIDX if they exist.
         if (isVtxAttribMtxIdx(vtxAttrib))
-            assert(vtxAttrDesc.type === GX.AttrType.DIRECT);
+            assert(vtxAttrDesc.type === GX.AttrType.DIRECT ||
+                   vtxAttrDesc.type === GX.AttrType.GENERATED_MTXIDX);
+        else
+            assert(vtxAttrDesc.type !== GX.AttrType.GENERATED_MTXIDX);
 
         if (vtxAttrDesc.type === GX.AttrType.DIRECT)
             srcVertexSize += getAttributeByteSizeRaw(vtxAttrib, vtxAttrFmt);
@@ -779,10 +782,24 @@ function generateRunVertices(loadedVertexLayout: LoadedVertexLayout, vatLayout: 
             const attrOffsetBase = `(${readIndex}) * ${stride}`;
             const arrayOffsetVarName = `arrayOffset${vtxAttrib}${uniqueSuffix}`;
 
+            let S = ``;
+
+            // If generating matrix indices for MP1, write the unresolved position index into a_Position.w.
+            // This index is relocated into a surface envelope index in a pass over the output data.
+            if (vtxAttrib == GX.Attr.POS) {
+                const mtxIdxAttrDesc = vatLayout.vcd[GX.Attr.PNMTXIDX];
+                if (mtxIdxAttrDesc && mtxIdxAttrDesc.type == GX.AttrType.GENERATED_MTXIDX) {
+                    const mtxIdxDstBaseOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
+                    S += `// MP1 GENERATED PNMTXIDX
+    ${compileWriteOneComponentF32(mtxIdxDstBaseOffs, readIndex)};
+    `;
+                }
+            }
+
             if (enableOutput) {
-                return `const ${arrayOffsetVarName} = ${attrOffsetBase};${compileOneAttrib(viewName, arrayOffsetVarName, drawCallIdxIncr)}`;
+                return S + `const ${arrayOffsetVarName} = ${attrOffsetBase};${compileOneAttrib(viewName, arrayOffsetVarName, drawCallIdxIncr)}`;
             } else {
-                return compileOneAttrib('', '', drawCallIdxIncr);
+                return S + compileOneAttrib('', '', drawCallIdxIncr);
             }
         }
 
@@ -810,6 +827,8 @@ function generateRunVertices(loadedVertexLayout: LoadedVertexLayout, vatLayout: 
             return compileAttribIndex(compileVtxArrayViewName(vtxAttrib), `dlView.getUint8(drawCallIdx)`, 1);
         case GX.AttrType.INDEX16:
             return compileAttribIndex(compileVtxArrayViewName(vtxAttrib), `dlView.getUint16(drawCallIdx)`, 2);
+        case GX.AttrType.GENERATED_MTXIDX:
+            return ``;
         default:
             throw "whoops";
         }

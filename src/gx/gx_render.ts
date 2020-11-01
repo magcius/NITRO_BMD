@@ -54,11 +54,13 @@ export class MaterialParams {
     }
 }
 
+export const u_PosMtxNum = 100;
+
 export class PacketParams {
-    public u_PosMtx: mat4[] = nArray(10, () => mat4.create());
+    public u_PosMtx: mat4[] = nArray(u_PosMtxNum, () => mat4.create());
 
     public clear(): void {
-        for (let i = 0; i < 10; i++)
+        for (let i = 0; i < u_PosMtxNum; i++)
             mat4.identity(this.u_PosMtx[i]);
     }
 }
@@ -136,7 +138,7 @@ function fillPacketParamsDataWithOptimizations(material: GX_Material.GXMaterial,
     let offs = bOffs;
 
     if (GX_Material.materialUsePnMtxIdx(material))
-        for (let i = 0; i < 10; i++)
+        for (let i = 0; i < u_PosMtxNum; i++)
             offs += fillMatrix4x3(d, offs, packetParams.u_PosMtx[i]);
     else
         offs += fillMatrix4x3(d, offs, packetParams.u_PosMtx[0]);

@@ -12,6 +12,9 @@ import { InputStream } from './stream';
 import { colorFromRGBA, colorNewFromRGBA, Color } from "../Color";
 import { computeModelMatrixSRT, MathConstants } from "../MathHelpers";
 import { GameVersion, AreaVersion } from "./mrea";
+import { AnimTreeNode } from "./animation/tree_nodes";
+import { CINF } from "./cinf";
+import { AnimSysContext, IMetaAnim } from "./animation/meta_nodes";
 
 export const enum MP1EntityType {
     Actor                   = 0x00,
@@ -113,22 +116,32 @@ export class Entity {
     public readProperty_MP2(stream: InputStream, resourceSystem: ResourceSystem, propertyID: number) {
     }
 
-    public getRenderModel(): CMDL | null {
+    public getRenderModel(resourceSystem: ResourceSystem): [CMDL | null, CINF?, IMetaAnim?, AnimSysContext?] {
         if (this.animParams !== null) {
             const charID = this.animParams.charID;
+            const animID = this.animParams.animID;
             const ancs = this.animParams.ancs;
 
-            if (ancs !== null && ancs.characters.length > charID) {
-                const model = ancs.characters[charID].model;
-                if (model !== null)
-                    return model;
+            if (ancs !== null && ancs.characterSet.length > charID) {
+                const character = ancs.characterSet[charID];
+                const model = character.model;
+                if (model !== null) {
+                    if (animID != -1) {
+                        const animName = character.animNames[animID];
+                        const anim = ancs.animationSet.animations.find(v => v.name == animName);
+                        const metaAnim = anim?.animation;
+                        if (metaAnim)
+                            return [model, character.skel, metaAnim, { transDB: ancs.animationSet.transitionDatabase, resourceSystem: resourceSystem }];
+                    }
+                    return [model, character.skel];
+                }
             } 
         }
 
         if (this.char !== null && this.char.cmdl !== null)
-            return this.char.cmdl;
+            return [this.char.cmdl];
 
-        return this.model;
+        return [this.model];
     }
 }
 
