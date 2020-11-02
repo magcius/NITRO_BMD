@@ -148,7 +148,7 @@ class StreamedAnimReaderTotals {
             const cumulativeBase = i * 10;
             const channel = this.source.boneChannels[i];
 
-            if (channel.rotation.hasKeys) {
+            if (channel.rotation.keyCount) {
                 dest.cumulativeInts[cumulativeBase] = loader.LoadBool() ? 1 : 0;
                 dest.cumulativeInts[cumulativeBase + 1] =
                     this.cumulativeInts[cumulativeBase + 1] + loader.LoadSigned(channel.rotation.bitsX);
@@ -158,7 +158,7 @@ class StreamedAnimReaderTotals {
                     this.cumulativeInts[cumulativeBase + 3] + loader.LoadSigned(channel.rotation.bitsZ);
             }
 
-            if (channel.translation.hasKeys) {
+            if (channel.translation.keyCount) {
                 dest.cumulativeInts[cumulativeBase + 4] =
                     this.cumulativeInts[cumulativeBase + 4] + loader.LoadSigned(channel.translation.bitsX);
                 dest.cumulativeInts[cumulativeBase + 5] =
@@ -167,7 +167,7 @@ class StreamedAnimReaderTotals {
                     this.cumulativeInts[cumulativeBase + 6] + loader.LoadSigned(channel.translation.bitsZ);
             }
 
-            if (channel.scale.hasKeys) {
+            if (channel.scale.keyCount) {
                 dest.cumulativeInts[cumulativeBase + 7] =
                     this.cumulativeInts[cumulativeBase + 7] + loader.LoadSigned(channel.scale.bitsX);
                 dest.cumulativeInts[cumulativeBase + 8] =
@@ -189,7 +189,7 @@ class StreamedAnimReaderTotals {
             const cumulativeBase = i * 10;
             const channel = this.source.boneChannels[i];
 
-            if (channel.rotation.hasKeys) {
+            if (channel.rotation.keyCount) {
                 this.cumulativeFloats[cumulativeBase + 1] = Math.sin(this.cumulativeInts[cumulativeBase + 1] * rq);
                 this.cumulativeFloats[cumulativeBase + 2] = Math.sin(this.cumulativeInts[cumulativeBase + 2] * rq);
                 this.cumulativeFloats[cumulativeBase + 3] = Math.sin(this.cumulativeInts[cumulativeBase + 3] * rq);
@@ -203,13 +203,13 @@ class StreamedAnimReaderTotals {
                     this.cumulativeFloats[cumulativeBase] = -this.cumulativeFloats[cumulativeBase];
             }
 
-            if (channel.translation.hasKeys) {
+            if (channel.translation.keyCount) {
                 this.cumulativeFloats[cumulativeBase + 4] = this.cumulativeInts[cumulativeBase + 4] * tq;
                 this.cumulativeFloats[cumulativeBase + 5] = this.cumulativeInts[cumulativeBase + 5] * tq;
                 this.cumulativeFloats[cumulativeBase + 6] = this.cumulativeInts[cumulativeBase + 6] * tq;
             }
 
-            if (channel.scale.hasKeys) {
+            if (channel.scale.keyCount) {
                 this.cumulativeFloats[cumulativeBase + 7] = this.cumulativeInts[cumulativeBase + 7] * sq;
                 this.cumulativeFloats[cumulativeBase + 8] = this.cumulativeInts[cumulativeBase + 8] * sq;
                 this.cumulativeFloats[cumulativeBase + 9] = this.cumulativeInts[cumulativeBase + 9] * sq;
@@ -423,21 +423,21 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
         if (!idx)
             return false;
-        return this.source.boneChannels[idx].rotation.hasKeys;
+        return this.source.boneChannels[idx].rotation.keyCount !== 0;
     }
 
     private HasTranslation(seg: number): boolean {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
         if (!idx)
             return false;
-        return this.source.boneChannels[idx].translation.hasKeys;
+        return this.source.boneChannels[idx].translation.keyCount !== 0;
     }
 
     private HasScale(seg: number): boolean {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
         if (!idx)
             return false;
-        return this.source.boneChannels[idx].scale.hasKeys;
+        return this.source.boneChannels[idx].scale.keyCount !== 0;
     }
 
     private GetRotation(seg: number): quat {

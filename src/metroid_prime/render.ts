@@ -29,7 +29,7 @@ import { HierarchyPoseBuilder, PoseAsTransforms } from "./animation/pose_builder
 import { CSKR } from "./cskr";
 import { ResourceSystem } from "./resource";
 import { CINF } from "./cinf";
-import { AnimSysContext, IMetaAnim } from "./animation/meta_nodes";
+import { AnimSysContext, IMetaAnim, MetaAnimPlay } from "./animation/meta_nodes";
 
 const fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStillWrong = mat4.fromValues(
     1, 0,  0, 0,
@@ -711,6 +711,10 @@ export class CMDLRenderer {
             return;
 
         if (this.animSysContext && this.metaAnim && this.poseBuilder && this.cskr) {
+            if (this.metaAnim instanceof MetaAnimPlay) {
+                if (this.metaAnim.animName !== 'B_floatloop_hatch_open_samus_ship')
+                    return;
+            }
             if (!this.animTreeNode) {
                 this.animTreeNode = this.metaAnim.GetAnimationTree(this.animSysContext);
             }
