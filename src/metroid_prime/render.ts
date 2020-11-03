@@ -2,12 +2,12 @@
 import { vec3, mat4 } from 'gl-matrix';
 
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { nArray, assert } from '../util';
-import { MaterialParams, PacketParams, GXTextureHolder, ColorKind, u_PosMtxNum } from "../gx/gx_render";
+import { nArray, assert, assertExists } from "../util";
+import { MaterialParams, PacketParams, GXTextureHolder, ColorKind } from "../gx/gx_render";
 
 import { MREA, Material, Surface, UVAnimationType, MaterialSet, AreaLight } from './mrea';
 import * as Viewer from '../viewer';
-import { AABB, squaredDistanceFromPointToAABB } from '../Geometry';
+import { AABB, IntersectionState, squaredDistanceFromPointToAABB } from "../Geometry";
 import { TXTR } from './txtr';
 import { CMDL } from './cmdl';
 import { TextureMapping } from '../TextureHolder';
@@ -157,6 +157,7 @@ class SurfaceInstance {
         else
             computeViewMatrix(viewMatrix, viewerInput.camera);
 
+        /*
         const renderInst = renderHelper.renderInstManager.newRenderInst();
         this.surfaceData.shapeHelper.setOnRenderInst(renderInst);
         this.materialGroupInstance.setOnRenderInst(device, renderHelper.renderInstManager.gfxRenderCache, renderInst);
@@ -177,6 +178,43 @@ class SurfaceInstance {
 
         renderInst.setSamplerBindingsFromTextureMappings(this.materialInstance.textureMappings);
         renderHelper.renderInstManager.submitRenderInst(renderInst);
+         */
+
+
+        if (envelopeMats)
+            mat4.mul(modelViewMatrixScratch, viewMatrix, modelMatrixScratch);
+
+        const template = renderHelper.renderInstManager.pushTemplateRenderInst();
+        this.materialGroupInstance.setOnRenderInst(device, renderHelper.renderInstManager.gfxRenderCache, template);
+        template.sortKey = setSortKeyDepthKey(template.sortKey, this.materialTextureKey);
+        template.setSamplerBindingsFromTextureMappings(this.materialInstance.textureMappings);
+
+        const loadedVertexData = assertExists(this.surfaceData.shapeHelper.loadedVertexData);
+        for (let p = 0; p < loadedVertexData.draws.length; p++) {
+            const packet = loadedVertexData.draws[p];
+
+            if (envelopeMats) {
+                for (let j = 0; j < packet.posNrmMatrixTable.length; j++) {
+                    const posNrmMatrixIdx = packet.posNrmMatrixTable[j];
+
+                    // Leave existing matrix.
+                    if (posNrmMatrixIdx === 0xFFFF)
+                        continue;
+
+                    mat4.mul(this.packetParams.u_PosMtx[j], modelViewMatrixScratch, envelopeMats[posNrmMatrixIdx]);
+                }
+            } else {
+                mat4.mul(this.packetParams.u_PosMtx[0], viewMatrix, modelMatrixScratch);
+            }
+
+            const renderInst = renderHelper.renderInstManager.newRenderInst();
+            this.surfaceData.shapeHelper.setOnRenderInst(renderInst, packet);
+            this.materialGroupInstance.materialHelper.allocatePacketParamsDataOnInst(renderInst, this.packetParams);
+
+            renderHelper.renderInstManager.submitRenderInst(renderInst);
+        }
+
+        renderHelper.renderInstManager.popTemplateRenderInst();
     }
 }
 
@@ -712,7 +750,7 @@ export class CMDLRenderer {
 
         if (this.animSysContext && this.metaAnim && this.poseBuilder && this.cskr) {
             if (this.metaAnim instanceof MetaAnimPlay) {
-                if (this.metaAnim.animName !== 'B_floatloop_hatch_open_samus_ship')
+                if (this.metaAnim.animName !== 'B_seatedInjuredReady_pirate')
                     return;
             }
             if (!this.animTreeNode) {

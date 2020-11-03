@@ -14,7 +14,6 @@ import { AttachmentStateSimple, setAttachmentStateSimple } from '../gfx/helpers/
 import { MathConstants, transformVec3Mat4w1, transformVec3Mat4w0 } from '../MathHelpers';
 import { DisplayListRegisters, VertexAttributeInput } from './gx_displaylist';
 import { DeviceProgram } from '../Program';
-import { u_PosMtxNum } from "./gx_render";
 
 // TODO(jstpierre): Move somewhere better...
 export const EFB_WIDTH = 640;
@@ -346,7 +345,7 @@ ${materialHasDynamicAlphaTest(material) ? `
 // TODO(jstpierre): Rename from ub_PacketParams.
 layout(std140) uniform ub_PacketParams {
 ${materialUsePnMtxIdx(material) ? `
-    Mat4x3 u_PosMtx[${u_PosMtxNum}];
+    Mat4x3 u_PosMtx[10];
 ` : `
     Mat4x3 u_PosMtx[1];
 `}
@@ -374,7 +373,7 @@ export function getPacketParamsBlockSize(material: GXMaterial): number {
     let size = 0;
 
     if (materialUsePnMtxIdx(material))
-        size += 4*3 * u_PosMtxNum;
+        size += 4*3 * 10;
     else
         size += 4*3 * 1;
 

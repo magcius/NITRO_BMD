@@ -20,6 +20,7 @@ import {
     GX_VtxAttrFmt,
     GX_VtxDesc,
     LoadedVertexData,
+    LoadedVertexDraw,
     LoadedVertexLayout
 } from "../gx/gx_displaylist";
 import { mat4, vec3 } from "gl-matrix";
@@ -30,7 +31,6 @@ import { Color, colorFromRGBA8, colorNewCopy, colorNewFromRGBA, TransparentBlack
 import { MathConstants } from "../MathHelpers";
 import { CSKR, SkinRule } from "./cskr";
 import { Endianness, getSystemEndianness } from "../endian";
-import { u_PosMtxNum } from "../gx/gx_render";
 
 export interface MREA {
     materialSet: MaterialSet;
@@ -384,7 +384,7 @@ function parseMaterialSet_MP1_MP2(stream: InputStream, resourceSystem: ResourceS
             texGens.push({ type, source, matrix, normalize, postMatrix });
         }
 
-        const uvAnimationsSize = stream.readUint32(); - 0x04;
+        const uvAnimationsSize = stream.readUint32() - 0x04;
         const uvAnimationsCount = stream.readUint32();
 
         const uvAnimations: UVAnimation[] = parseMaterialSet_UVAnimations(stream, uvAnimationsCount);
@@ -486,7 +486,6 @@ export interface Surface {
     loadedVertexData: LoadedVertexData;
     loadedVertexLayout: LoadedVertexLayout;
     worldModelIndex: number;
-    envelopeSkinRules?: number[];
 }
 
 export interface WorldModel {
@@ -676,43 +675,136 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         vtxArrays[GX.Attr.TEX6] = { buffer: stream.getBuffer(), offs: uvfSectionOffs, stride: getAttributeByteSize(fmtVat, GX.Attr.TEX6) };
         vtxArrays[GX.Attr.TEX7] = { buffer: stream.getBuffer(), offs: uvfSectionOffs, stride: getAttributeByteSize(fmtVat, GX.Attr.TEX7) };
 
-        const loadedVertexData = vtxLoader.runVertices(vtxArrays, dlData);
+        let loadedVertexData = vtxLoader.runVertices(vtxArrays, dlData);
 
-        let envelopeSkinRules: number[] | undefined;
         if (generateMtxIdxs) {
             const littleEndian = getSystemEndianness() === Endianness.LITTLE_ENDIAN;
             const vertexStride = loadedVertexLayout.vertexBufferStrides[0];
             const pnMtxIdxOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
-            const vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
+            let vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
+            const indexDataView = new Uint16Array(loadedVertexData.indexData);
 
-            const skinToVerticesMap = new Map<number, number[]>();
-            const overflowVertices = [];
-            for (let i = 0; i < loadedVertexData.totalVertexCount; ++i) {
-                const posIdx = vertexDataView.getFloat32(vertexStride * i + pnMtxIdxOffs, littleEndian);
-                const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
+            // Only one draw of triangle primitives is generated.
+            // Split envelope banks on triangle boundaries.
+            const srcDraw = loadedVertexData.draws[0];
+            const dstDraws: LoadedVertexDraw[] = [];
+            let dstDraw: LoadedVertexDraw | null = null;
+            let skinToIndicesMapCommit = new Map<number, number[]>();
 
-                let skinVertices = skinToVerticesMap.get(skinIdx);
-                if (!skinVertices) {
-                    skinVertices = [];
-                    skinToVerticesMap.set(skinIdx, skinVertices);
+            // Map<vertex-index, Map<matrix-index, [referencing-indices]>>
+            const relocationMap = new Map<number, Map<number, number[]>>();
+            let numAdditionalVertices = 0;
+
+            function emitDraw() {
+                let matrixIndex = 0;
+                for (const [skinIdx, skinIndices] of skinToIndicesMapCommit) {
+                    for (const i of skinIndices) {
+                        const v = indexDataView[i];
+                        // Target envelope indices are stored in a set so we can duplicate
+                        // vertices with conflicting envelope indices later.
+                        const matrixMap = relocationMap.get(v);
+                        if (matrixMap === undefined) {
+                            relocationMap.set(v, new Map([[matrixIndex, [i]]]));
+                        } else {
+                            const referencingIndices = matrixMap.get(matrixIndex);
+                            if (referencingIndices === undefined) {
+                                matrixMap.set(matrixIndex, [i]);
+                            } else {
+                                // A vertex referencing multiple matrix indices must be duplicated later.
+                                referencingIndices.push(i);
+                                ++numAdditionalVertices;
+                            }
+                        }
+                    }
+                    dstDraw!.posNrmMatrixTable[matrixIndex++] = skinIdx;
                 }
-                if (skinToVerticesMap.size > u_PosMtxNum) {
-                    overflowVertices.push(i);
+
+                dstDraws.push(dstDraw!);
+                dstDraw = null;
+                skinToIndicesMapCommit = new Map<number, number[]>();
+            }
+
+            for (let i = 0; i < srcDraw.indexCount;) {
+                if (dstDraw === null) {
+                    dstDraw = {
+                        indexOffset: i,
+                        indexCount: 0,
+                        posNrmMatrixTable: Array(10).fill(0xFFFF),
+                        texMatrixTable: Array(10).fill(0xFFFF)
+                    };
+                }
+
+                // Modify commit map directly if assured it will not overflow on this triangle.
+                const skinToIndicesMap = skinToIndicesMapCommit.size < 7 ?
+                    skinToIndicesMapCommit : new Map<number, number[]>(skinToIndicesMapCommit);
+
+                let skinIndexPushes: [number, number][] = [];
+                for (let j = i, jEnd = i + 3; j < jEnd; ++j) {
+                    const v = indexDataView[j];
+                    const posIdx = vertexDataView.getFloat32(v * vertexStride + pnMtxIdxOffs, littleEndian);
+                    const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
+
+                    if (!skinToIndicesMap.has(skinIdx))
+                        skinToIndicesMap.set(skinIdx, []);
+
+                    if (skinToIndicesMap.size > 10) {
+                        // Matrix exhaustion! Emit draw excluding this triangle and try it again.
+                        emitDraw();
+                        break;
+                    }
+
+                    skinIndexPushes.push([skinIdx, j]);
+                }
+
+                if (dstDraw === null) {
+                    // try again
                     continue;
                 }
-                skinVertices.push(i);
+
+                // clear to proceed with map mutations
+                for (const [skinIdx, j] of skinIndexPushes)
+                    skinToIndicesMap.get(skinIdx)!.push(j);
+
+                skinToIndicesMapCommit = skinToIndicesMap;
+
+                dstDraw!.indexCount += 3;
+                i += 3;
             }
 
-            if (overflowVertices.length > 0) {
-                console.warn(`unable to skin ${overflowVertices.length} vertices - out of matrices`);
+            emitDraw();
+
+            loadedVertexData.draws = dstDraws;
+
+            if (numAdditionalVertices) {
+                const newVertexCount = loadedVertexData.totalVertexCount + numAdditionalVertices;
+                const reallocatedBuffer = new ArrayBuffer(newVertexCount * vertexStride);
+                new Uint8Array(reallocatedBuffer).set(new Uint8Array(loadedVertexData.vertexBuffers[0]));
+                loadedVertexData.vertexBuffers[0] = reallocatedBuffer;
+                vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
             }
 
-            envelopeSkinRules = [];
-            for (const [skinIdx, skinVertices] of skinToVerticesMap) {
-                for (const vertIdx of skinVertices)
-                    vertexDataView.setFloat32(vertexStride * vertIdx + pnMtxIdxOffs, envelopeSkinRules.length, littleEndian);
-                envelopeSkinRules.push(skinIdx)
+            for (const [v, matrixMap] of relocationMap) {
+                let relocatedFirst = false;
+                for (const [matrixIndex, indexList] of matrixMap) {
+                    if (!relocatedFirst) {
+                        // The first matrix index is relocated in-place
+                        vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
+                        relocatedFirst = true;
+                    } else {
+                        // Subsequent matrix indices require a duplicate vertex
+                        const newVertexIndex = loadedVertexData.totalVertexCount++;
+                        new Uint8Array(loadedVertexData.vertexBuffers[0]).set(new Uint8Array(loadedVertexData.vertexBuffers[0],
+                            v * vertexStride, vertexStride), newVertexIndex * vertexStride);
+                        vertexDataView.setFloat32(newVertexIndex * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
+
+                        // Patch all referencing indices to the duplicated vertex
+                        for (i of indexList)
+                            indexDataView[i] = newVertexIndex;
+                    }
+                }
             }
+
+            loadedVertexData.totalVertexCount += numAdditionalVertices;
         }
 
         const surface: Surface = {
@@ -720,7 +812,6 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             worldModelIndex,
             loadedVertexData,
             loadedVertexLayout,
-            envelopeSkinRules,
         };
         surfaces.push(surface);
 
@@ -1094,7 +1185,7 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem): MREA
     if (version >= AreaVersion.MP3) {
         for (let i = 0; i < numSectionNumbers; i++) {
             const sectionID = stream.readFourCC();
-            const sectionNum = stream.  readUint32();
+            const sectionNum = stream.readUint32();
 
             switch (sectionID) {
                 case "WOBJ": worldGeometrySectionIndex = sectionNum; break;
