@@ -17,6 +17,7 @@ import { CameraController } from '../Camera';
 import BitMap, { bitMapSerialize, bitMapDeserialize } from '../BitMap';
 import { CMDL } from './cmdl';
 import { colorNewCopy, OpaqueBlack } from '../Color';
+import { ANCS } from "./ancs";
 
 function layerVisibilitySyncToBitMap(layers: UI.Layer[], b: BitMap): void {
     for (let i = 0; i < layers.length; i++)
@@ -36,6 +37,7 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
     public areaRenderers: MREARenderer[] = [];
     public defaultSkyRenderer: CMDLRenderer | null = null;
     public worldAmbientColor = colorNewCopy(OpaqueBlack);
+    public showAllActors: boolean = false;
     private layersPanel: UI.LayerPanel;
 
     public onstatechanged!: () => void;
@@ -53,7 +55,7 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
         viewerInput.camera.setClipPlanes(0.2);
         fillSceneParamsDataOnTemplate(template, viewerInput, 0);
         for (let i = 0; i < this.areaRenderers.length; i++)
-            this.areaRenderers[i].prepareToRender(device, this.renderHelper, viewerInput, this.worldAmbientColor);
+            this.areaRenderers[i].prepareToRender(device, this.renderHelper, viewerInput, this.worldAmbientColor, this.showAllActors);
         this.prepareToRenderSkybox(device, viewerInput);
         this.renderHelper.prepareToRender(device, hostAccessPass);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
@@ -112,12 +114,31 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
             this.defaultSkyRenderer.destroy(device);
     }
 
+    public setShowAllActors(enabled: boolean) {
+        this.showAllActors = enabled;
+        this.onstatechanged();
+    }
+
+    private createRenderHacksPanel(): UI.Panel {
+        const renderHacksPanel = new UI.Panel();
+        renderHacksPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
+        renderHacksPanel.setTitle(UI.RENDER_HACKS_ICON, "Render Hacks");
+
+        const allActorsCheckbox = new UI.Checkbox("Show All Actors");
+        allActorsCheckbox.onchanged = () => {
+            this.setShowAllActors(allActorsCheckbox.checked);
+        };
+        renderHacksPanel.contents.appendChild(allActorsCheckbox.elem);
+
+        return renderHacksPanel;
+    }
+
     public createPanels(): UI.Panel[] {
         this.layersPanel = new UI.LayerPanel(this.areaRenderers);
         this.layersPanel.onlayertoggled = () => {
             this.onstatechanged();
         };
-        return [this.layersPanel];
+        return [this.layersPanel, this.createRenderHacksPanel()];
     }
 
     public serializeSaveState(dst: ArrayBuffer, offs: number): number {
@@ -125,6 +146,8 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
         const b = new BitMap(this.areaRenderers.length);
         layerVisibilitySyncToBitMap(this.areaRenderers, b);
         offs = bitMapSerialize(view, offs, b);
+        view.setUint8(offs, this.showAllActors ? 1 : 0);
+        offs += 1;
         return offs;
     }
 
@@ -136,6 +159,10 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
             offs = bitMapDeserialize(view, offs, b);
             layerVisibilitySyncFromBitMap(this.areaRenderers, b);
             this.layersPanel.syncLayerVisibility();
+        }
+        if (offs + 1 <= byteLength) {
+            this.showAllActors = view.getUint8(offs) != 0;
+            offs += 1;
         }
         return offs;
     }
@@ -152,6 +179,13 @@ class RetroSceneDesc implements Viewer.SceneDesc {
         const dataFetcher = context.dataFetcher;
         const levelPak = PAK.parse(await dataFetcher.fetchData(`metroid_prime/${this.filename}`), this.gameCompressionMethod);
         const resourceSystem = new ResourceSystem(this.game, [levelPak]);
+
+        // Preload all ANCS resources to associate models with skins
+        for (const entry of levelPak.resourceTable.values()) {
+            if (entry.fourCC === 'ANCS') {
+                resourceSystem.loadAssetByID<ANCS>(entry.fileID, entry.fourCC);
+            }
+        }
 
         for (const mlvlEntry of levelPak.namedResourceTable.values()) {
             assert(mlvlEntry.fourCC === 'MLVL');

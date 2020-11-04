@@ -78,5 +78,5 @@ export function bitMapDeserialize(view: DataView, offs: number, bitMap: BitMap):
         const shift = 24 - ((i & 0x03) << 3);
         bitMap.words[i >>> 2] |= view.getUint8(offs++) << shift;
     }
-    return numBytes;
+    return offs;
 }

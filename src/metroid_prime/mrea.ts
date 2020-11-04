@@ -11,7 +11,7 @@ import { InputStream } from "./stream";
 import { TXTR } from "./txtr";
 
 import { ResourceSystem } from "./resource";
-import { align, assert, assertExists } from "../util";
+import { align, assert, assertExists, nArray } from "../util";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import {
     compileVtxLoaderMultiVat,
@@ -633,11 +633,50 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             vcd[format.vtxAttrib] = { type: format.type, enableOutput: (format.mask <= 0x00FFFFFF) };
         }
 
-        // If MP1 and a CSKR is available, generate PNMTXIDX and TEX6MTXIDX
+        // If MP1 and a CSKR is available, generate PNMTXIDX and one TEXnMTXIDX
         const generateMtxIdxs = !isEchoes && cskr;
+        let texNMtxIdx: number | undefined = undefined;
+        let texGenNMtxIdx: number | undefined = undefined;
+        let availableMtxSlots = 10;
         if (generateMtxIdxs) {
             vcd[GX.Attr.PNMTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
-            //vcd[GX.Attr.TEX6MTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
+
+            for (let i = 0; i < material.uvAnimations.length; ++i) {
+                const uvAnim = material.uvAnimations[i];
+                if (!uvAnim)
+                    continue;
+                // Just allocate a matrix for the first position-dependent UV animation.
+                // Any remaining matrices will fall back to full-object position.
+                if (uvAnim.type === UVAnimationType.ENV_MAPPING_NO_TRANS ||
+                    uvAnim.type === UVAnimationType.ENV_MAPPING ||
+                    uvAnim.type === UVAnimationType.ENV_MAPPING_MODEL ||
+                    uvAnim.type === UVAnimationType.ENV_MAPPING_CYLINDER) {
+                    texNMtxIdx = i;
+                    availableMtxSlots = 10 - material.uvAnimations.length + 1;
+                    assert(availableMtxSlots >= 3);
+                    for (let tg = 0; tg < material.gxMaterial.texGens.length; ++tg) {
+                        const texGen = material.gxMaterial.texGens[tg];
+                        if (texGen.matrix === GX.TexGenMatrix.TEXMTX0 + 3 * i) {
+                            texGenNMtxIdx = tg;
+                            vcd[GX.Attr.TEX0MTXIDX + tg] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
+                            material.gxMaterial.useTexMtxIdx = nArray(8, () => false);
+                            material.gxMaterial.useTexMtxIdx[tg] = true;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // The first envelope will use the existing texture matrix slot and subsequent
+        // envelopes will allocate from the remaining slots.
+        function posMtxIdxToTexMtxIdx(posIdx: number): number {
+            assertExists(texNMtxIdx);
+            if (posIdx == 0)
+                return texNMtxIdx!;
+            else
+                return material.uvAnimations.length + posIdx - 1;
         }
 
         // GX_VTXFMT0 | GX_VA_NRM = GX_F32
@@ -681,6 +720,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             const littleEndian = getSystemEndianness() === Endianness.LITTLE_ENDIAN;
             const vertexStride = loadedVertexLayout.vertexBufferStrides[0];
             const pnMtxIdxOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
+            const texMtxIdxOffs = texGenNMtxIdx !== undefined ? loadedVertexLayout.vertexAttributeOffsets[GX.Attr.TEX0MTXIDX + texGenNMtxIdx] : undefined;
             let vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
             const indexDataView = new Uint16Array(loadedVertexData.indexData);
 
@@ -716,6 +756,11 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                             }
                         }
                     }
+
+                    if (texNMtxIdx !== undefined) {
+                        dstDraw!.texMatrixTable[posMtxIdxToTexMtxIdx(matrixIndex)] = skinIdx;
+                    }
+
                     dstDraw!.posNrmMatrixTable[matrixIndex++] = skinIdx;
                 }
 
@@ -747,7 +792,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     if (!skinToIndicesMap.has(skinIdx))
                         skinToIndicesMap.set(skinIdx, []);
 
-                    if (skinToIndicesMap.size > 10) {
+                    if (skinToIndicesMap.size > availableMtxSlots) {
                         // Matrix exhaustion! Emit draw excluding this triangle and try it again.
                         emitDraw();
                         break;
@@ -789,6 +834,8 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     if (!relocatedFirst) {
                         // The first matrix index is relocated in-place
                         vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
+                        if (texMtxIdxOffs !== undefined)
+                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOffs, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
                         relocatedFirst = true;
                     } else {
                         // Subsequent matrix indices require a duplicate vertex
@@ -796,9 +843,11 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                         new Uint8Array(loadedVertexData.vertexBuffers[0]).set(new Uint8Array(loadedVertexData.vertexBuffers[0],
                             v * vertexStride, vertexStride), newVertexIndex * vertexStride);
                         vertexDataView.setFloat32(newVertexIndex * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
+                        if (texMtxIdxOffs !== undefined)
+                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOffs, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
 
                         // Patch all referencing indices to the duplicated vertex
-                        for (i of indexList)
+                        for (const i of indexList)
                             indexDataView[i] = newVertexIndex;
                     }
                 }

@@ -3,16 +3,15 @@ import { ResourceSystem } from "../resource";
 import { CharAnimTime } from "./char_anim_time";
 import { EVNT } from "../evnt";
 import { quat, vec3 } from "gl-matrix";
-import { saturate } from "../../MathHelpers";
+import { compareEpsilon, saturate } from "../../MathHelpers";
 import { PerSegmentData } from "./base_reader";
 
 class KeyStorage {
     keyData: Float32Array;
     frameCount: number;
-    scalePerFrame: number;
-    rotationPerFrame: number;
-    translationPerFrame: number;
-    floatsPerFrame: number;
+    scaleKeyCount: number;
+    rotationKeyCount: number;
+    translationKeyCount: number;
 
     constructor(stream: InputStream, frameCount: number, mp2: boolean) {
         let scaleKeyCount = 0;
@@ -64,28 +63,24 @@ class KeyStorage {
         readFloat3(stream.readUint32());
 
         this.frameCount = frameCount;
-        this.scalePerFrame = (scaleKeyCount / frameCount) >>> 0;
-        this.rotationPerFrame = (rotationKeyCount / frameCount) >>> 0;
-        this.translationPerFrame = (translationKeyCount / frameCount) >>> 0;
-        this.floatsPerFrame =
-            this.scalePerFrame * 3 +
-            this.rotationPerFrame * 4 +
-            this.translationPerFrame * 3;
+        this.scaleKeyCount = scaleKeyCount;
+        this.rotationKeyCount = rotationKeyCount;
+        this.translationKeyCount = translationKeyCount;
     }
 
     GetScale(frameIdx: number, scaleIdx: number): vec3 {
-        const offset = frameIdx * this.floatsPerFrame + scaleIdx * 3;
+        const offset = (this.frameCount * scaleIdx + frameIdx) * 3;
         return vec3.fromValues(this.keyData[offset], this.keyData[offset + 1], this.keyData[offset + 2]);
     }
 
     GetRotation(frameIdx: number, rotIdx: number): quat {
-        const offset = frameIdx * this.floatsPerFrame + this.scalePerFrame + rotIdx * 4;
+        const offset = this.scaleKeyCount * 3 + (this.frameCount * rotIdx + frameIdx) * 4;
         return quat.fromValues(this.keyData[offset + 1], this.keyData[offset + 2],
             this.keyData[offset + 3], this.keyData[offset]);
     }
 
     GetTranslation(frameIdx: number, transIdx: number): vec3 {
-        const offset = frameIdx * this.floatsPerFrame + this.scalePerFrame + this.rotationPerFrame + transIdx * 3;
+        const offset = this.scaleKeyCount * 3 + this.rotationKeyCount * 4 + (this.frameCount * transIdx + frameIdx) * 3;
         return vec3.fromValues(this.keyData[offset], this.keyData[offset + 1], this.keyData[offset + 2]);
     }
 }
@@ -106,7 +101,7 @@ export class AnimSource {
         this.duration = CharAnimTime.FromStream(stream);
         this.interval = CharAnimTime.FromStream(stream);
         this.frameCount = stream.readUint32();
-        this.rootBone = stream.readUint8();
+        this.rootBone = stream.readUint32();
 
         function readChannelIndexArray(): Uint8Array {
             const count = stream.readUint32();
@@ -123,6 +118,8 @@ export class AnimSource {
         if (mp2)
             this.scaleChannels = readChannelIndexArray();
 
+        this.keyStorage = new KeyStorage(stream, this.frameCount, mp2);
+
         if (!mp2) {
             const evntID = stream.readAssetID();
             this.evntData = resourceSystem.loadAssetByID<EVNT>(evntID, "EVNT");
@@ -132,7 +129,7 @@ export class AnimSource {
     private GetFrameAndT(time: CharAnimTime) {
         const frameIdx = time.Div(this.interval) >>> 0;
         let remTime = time.time - frameIdx * this.interval.time;
-        if (Math.abs(remTime) < 0.00001)
+        if (compareEpsilon(remTime, 0.0))
             remTime = 0.0;
         const t = saturate(remTime / this.interval.time);
         return {frame: frameIdx, t: t};

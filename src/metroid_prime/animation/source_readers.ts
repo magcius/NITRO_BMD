@@ -50,6 +50,11 @@ export class AnimSourceReader extends AnimSourceReaderBase {
 
     AdvanceView(dt: CharAnimTime): AdvancementResults {
         if (this.curTime.GreaterEqual(this.source.duration)) {
+            this.curTime = new CharAnimTime();
+            this.passedBoolIdx = 0;
+            this.passedIntIdx = 0;
+            this.passedParticleIdx = 0;
+            this.passedSoundIdx = 0;
             return {remTime: dt, deltas: new AdvancementDeltas()};
         } else if (dt.EqualsZero()) {
             return {remTime: new CharAnimTime(), deltas: new AdvancementDeltas()};
@@ -116,6 +121,7 @@ class StreamedAnimReaderTotals {
         // Rotation[W,X,Y,Z], Translation[X,Y,Z], Scale[X,Y,Z]
         this.cumulativeInts = new Int32Array(source.boneChannelCount * 10);
         this.cumulativeFloats = new Float32Array(source.boneChannelCount * 10);
+        this.Initialize();
     }
 
     Initialize() {
@@ -421,42 +427,42 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
 
     private HasRotation(seg: number): boolean {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return false;
         return this.source.boneChannels[idx].rotation.keyCount !== 0;
     }
 
     private HasTranslation(seg: number): boolean {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return false;
         return this.source.boneChannels[idx].translation.keyCount !== 0;
     }
 
     private HasScale(seg: number): boolean {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return false;
         return this.source.boneChannels[idx].scale.keyCount !== 0;
     }
 
     private GetRotation(seg: number): quat {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return quat.create();
         return this.totals.GetRotation(idx);
     }
 
     private GetTranslation(seg: number): vec3 {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return vec3.create();
         return this.totals.GetTranslation(idx);
     }
 
     private GetScale(seg: number): vec3 {
         const idx = this.segIdToIndex.SegIdToIndex(seg);
-        if (!idx)
+        if (idx === undefined)
             return vec3.create();
         return this.totals.GetScale(idx);
     }

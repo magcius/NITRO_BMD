@@ -1,7 +1,7 @@
 import { GeometryRenderer, FlipbookRenderer, GeometryData, MovementController, AnimationMode, SpawnedObjects, BKLayer } from './render';
 import { vec3, mat4, vec2 } from 'gl-matrix';
 import { nArray, assertExists } from '../util';
-import { MathConstants, lerp, angleDist, scaleMatrix, randomRange } from '../MathHelpers'
+import { MathConstants, lerp, angleDist, scaleMatrix, randomRange } from '../MathHelpers';
 import { getPointHermite } from '../Spline';
 import { brentildaWandConfig, ConfigurableEmitter, Emitter, farJumpPadConfig, JumpPadEmitter, lavaRockLaunchFlameConfig, nearJumpPadConfig, ParticleType, SparkleColor, Sparkler, lavaRockBigTrailConfig, lavaRockSmallTrailConfig, MultiEmitter, lavaRockExplosionConfig, fireballIndex, lavaSmokeIndex, emitAt, lavaRockShardsConfig, lavaRockSmokeConfig, LavaRockEmitter, StreamEmitter, fromBB, SceneEmitterHolder, SnowballChunkEmitter } from './particles';
 import { ViewerRenderInput } from '../viewer';

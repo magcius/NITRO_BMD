@@ -2,7 +2,7 @@
 // Implements support for Retro Studios actor data
 
 import { ResourceSystem } from "./resource";
-import { readString, assert } from "../util";
+import { readString, assert, assertExists } from "../util";
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { mat4, vec3 } from 'gl-matrix';
 import { CMDL } from './cmdl';
@@ -15,6 +15,7 @@ import { GameVersion, AreaVersion } from "./mrea";
 import { AnimTreeNode } from "./animation/tree_nodes";
 import { CINF } from "./cinf";
 import { AnimSysContext, IMetaAnim } from "./animation/meta_nodes";
+import { AnimationData } from "./render";
 
 export const enum MP1EntityType {
     Actor                   = 0x00,
@@ -116,9 +117,9 @@ export class Entity {
     public readProperty_MP2(stream: InputStream, resourceSystem: ResourceSystem, propertyID: number) {
     }
 
-    public getRenderModel(resourceSystem: ResourceSystem): [CMDL | null, CINF?, IMetaAnim?, AnimSysContext?] {
+    public getRenderModel(resourceSystem: ResourceSystem): [CMDL | null, AnimationData?] {
         if (this.animParams !== null) {
-            const charID = this.animParams.charID;
+            let charID = this.animParams.charID;
             const animID = this.animParams.animID;
             const ancs = this.animParams.ancs;
 
@@ -130,10 +131,15 @@ export class Entity {
                         const animName = character.animNames[animID];
                         const anim = ancs.animationSet.animations.find(v => v.name == animName);
                         const metaAnim = anim?.animation;
-                        if (metaAnim)
-                            return [model, character.skel, metaAnim, { transDB: ancs.animationSet.transitionDatabase, resourceSystem: resourceSystem }];
+                        if (metaAnim) {
+                            return [model, {
+                                cskr: assertExists(model.cskr),
+                                cinf: assertExists(character.skel),
+                                metaAnim: metaAnim,
+                                animSysContext: new AnimSysContext(ancs.animationSet.transitionDatabase, resourceSystem)}];
+                        }
                     }
-                    return [model, character.skel];
+                    return [model];
                 }
             } 
         }

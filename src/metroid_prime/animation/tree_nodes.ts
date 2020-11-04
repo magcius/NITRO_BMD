@@ -604,13 +604,12 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
             const setB = this.right.GetPerSegmentData(indices, time);
             let ret = new Array(indices.length);
             for (let i = 0; i < indices.length; ++i) {
-                const idx = indices[i];
-                const rotation = setA[idx].rotation && setB[idx].rotation ?
-                    quat.slerp(quat.create(), setA[idx].rotation as quat, setB[idx].rotation as quat, w) : undefined;
-                const translation = setA[idx].translation && setB[idx].translation ?
-                    vec3.lerp(vec3.create(), setA[idx].translation as vec3, setB[idx].translation as vec3, w) : undefined;
-                const scale = setA[idx].scale && setB[idx].scale ?
-                    vec3.lerp(vec3.create(), setA[idx].scale as vec3, setB[idx].scale as vec3, w) : undefined;
+                const rotation = setA[i].rotation && setB[i].rotation ?
+                    quat.slerp(quat.create(), setA[i].rotation as quat, setB[i].rotation as quat, w) : undefined;
+                const translation = setA[i].translation && setB[i].translation ?
+                    vec3.lerp(vec3.create(), setA[i].translation as vec3, setB[i].translation as vec3, w) : undefined;
+                const scale = setA[i].scale && setB[i].scale ?
+                    vec3.lerp(vec3.create(), setA[i].scale as vec3, setB[i].scale as vec3, w) : undefined;
                 ret[i] = new PerSegmentData(rotation, translation, scale);
             }
             return ret;
