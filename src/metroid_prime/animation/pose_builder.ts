@@ -1,5 +1,6 @@
 import { CINF } from "../cinf";
-import { mat3, mat4, quat, ReadonlyMat3, ReadonlyVec3, vec3 } from "gl-matrix";
+import { mat3, mat4, quat, vec3 } from "gl-matrix";
+import { mat3_ext, mat4_ext } from "../../gl-matrix-ext";
 import { AnimTreeNode } from "./tree_nodes";
 
 export type PoseAsTransforms = Map<number, mat4>;
@@ -10,43 +11,6 @@ interface TreeNode {
     rotation: quat;
     offset: vec3;
     scale: vec3;
-}
-
-// vec3 version of mat3.scale
-function mat3Scale(out: mat3, a: mat3, v: vec3): mat3 {
-    var x = v[0],
-        y = v[1],
-        z = v[2];
-    out[0] = x * a[0];
-    out[1] = x * a[1];
-    out[2] = x * a[2];
-    out[3] = y * a[3];
-    out[4] = y * a[4];
-    out[5] = y * a[5];
-    out[6] = z * a[6];
-    out[7] = z * a[7];
-    out[8] = z * a[8];
-    return out;
-}
-
-function mat4FromMat3AndTranslate(out: mat4, a: ReadonlyMat3, v: ReadonlyVec3): mat4 {
-    out[0] = a[0];
-    out[1] = a[1];
-    out[2] = a[2];
-    out[3] = 0.0;
-    out[4] = a[3];
-    out[5] = a[4];
-    out[6] = a[5];
-    out[7] = 0.0;
-    out[8] = a[6];
-    out[9] = a[7];
-    out[10] = a[8];
-    out[11] = 0.0;
-    out[12] = v[0];
-    out[13] = v[1];
-    out[14] = v[2];
-    out[15] = 1.0;
-    return out;
 }
 
 export class HierarchyPoseBuilder {
@@ -100,7 +64,7 @@ export class HierarchyPoseBuilder {
         vec3.add(offsetFromRoot, offsetFromRoot, parentOffset);
 
         const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== 3 ? bindOffset : vec3.create()));
-        const xf = mat4FromMat3AndTranslate(mat4.create(), rotationFromRootMat, offsetFromRoot);
+        const xf = mat4_ext.fromMat3AndTranslate(mat4.create(), rotationFromRootMat, offsetFromRoot);
         mat4.mul(xf, xf, inverseBind);
 
         pose.set(boneId, xf);
@@ -118,13 +82,13 @@ export class HierarchyPoseBuilder {
 
         const rotationFromRoot = quat.mul(quat.create(), parentRot, node.rotation);
         const rotationFromRootMat = mat3.fromQuat(mat3.create(), rotationFromRoot);
-        const rotationScale = mat3Scale(mat3.create(), rotationFromRootMat, node.scale);
+        const rotationScale = mat3_ext.scale3(mat3.create(), rotationFromRootMat, node.scale);
 
         const offsetFromRoot = vec3.transformMat3(vec3.create(), node.offset, parentXf);
         vec3.add(offsetFromRoot, offsetFromRoot, parentOffset);
 
         const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== 3 ? bindOffset : vec3.create()));
-        const xf = mat4FromMat3AndTranslate(mat4.create(), rotationScale, offsetFromRoot);
+        const xf = mat4_ext.fromMat3AndTranslate(mat4.create(), rotationScale, offsetFromRoot);
         mat4.mul(xf, xf, inverseBind);
 
         pose.set(boneId, xf);

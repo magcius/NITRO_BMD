@@ -13,7 +13,14 @@ import { CMDL } from './cmdl';
 import { TextureMapping } from '../TextureHolder';
 import { GfxDevice, GfxFormat, GfxSampler, GfxMipFilterMode, GfxTexFilterMode, GfxWrapMode } from '../gfx/platform/GfxPlatform';
 import { GfxCoalescedBuffersCombo, GfxBufferCoalescerCombo } from '../gfx/helpers/BufferHelpers';
-import { GfxRenderInst, GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepthKey } from '../gfx/render/GfxRenderer';
+import {
+    GfxRenderInst,
+    GfxRenderInstManager,
+    makeSortKey,
+    GfxRendererLayer,
+    setSortKeyDepthKey,
+    setSortKeyBias
+} from "../gfx/render/GfxRenderer";
 import { computeViewMatrixSkybox, computeViewMatrix } from '../Camera';
 import { LoadedVertexData, LoadedVertexDraw, LoadedVertexLayout } from '../gx/gx_displaylist';
 import { GXMaterialHacks, lightSetWorldPositionViewMatrix, lightSetWorldDirectionNormalMatrix, GX_Program } from '../gx/gx_material';
@@ -244,8 +251,10 @@ class MaterialGroupInstance {
 
         renderInst.setUniformBufferOffset(GX_Program.ub_MaterialParams, this.materialParamsBlockOffs, this.materialHelper.materialParamsBufferSize);
 
-        const layer = this.material.isTransparent ? GfxRendererLayer.TRANSLUCENT : GfxRendererLayer.OPAQUE;
+        const layer = this.material.isDepthSorted ? GfxRendererLayer.TRANSLUCENT : GfxRendererLayer.OPAQUE;
         renderInst.sortKey = makeSortKey(layer, this.materialHelper.programKey);
+        if (this.material.isDepthSorted)
+            renderInst.sortKey = setSortKeyBias(renderInst.sortKey, this.material.sortBias);
     }
 
     public prepareToRender(renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput, modelMatrix: mat4, isSkybox: boolean, actorLights: ActorLights | null, worldAmbientColor: Color, envelopeModelMatrices?: (mat4|null)[]): void {
@@ -578,7 +587,7 @@ export class MREARenderer {
             const materialCommand = this.materialInstances[materialIndex];
 
             // Transparent objects should not be merged.
-            const canMerge = !materialCommand.material.isTransparent;
+            const canMerge = !materialCommand.material.isDepthSorted;
             i++;
             while (i < surfaces.length && surfaces[i].materialIndex === materialIndex && canMerge)
                 i++;

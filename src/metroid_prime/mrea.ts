@@ -107,7 +107,8 @@ export type UVAnimation = UVAnimation_Mat | UVAnimation_UVScroll | UVAnimation_R
 
 export interface Material {
     isOccluder: boolean;
-    isTransparent: boolean;
+    isDepthSorted: boolean;
+    sortBias: number;
     isUVShort: boolean;
     isWhiteAmb: boolean;
     groupIndex: number;
@@ -128,7 +129,7 @@ export interface MaterialSet {
 
 export const enum MaterialFlags {
     HAS_KONST      = 0x00000008,
-    IS_TRANSPARENT = 0x00000010,
+    DEPTH_SORTING  = 0x00000010,
     ALPHA_TEST     = 0x00000020,
     HAS_SAMUS_REFL = 0x00000040,
     DEPTH_WRITE    = 0x00000080,
@@ -393,7 +394,7 @@ function parseMaterialSet_MP1_MP2(stream: InputStream, resourceSystem: ResourceS
         const name = `PrimeGen_${i}`;
         const cullMode = GX.CullMode.FRONT;
 
-        const isTransparent = !!(flags & MaterialFlags.IS_TRANSPARENT);
+        const isDepthSorted = !!(flags & MaterialFlags.DEPTH_SORTING);
         const isOccluder = !!(flags & MaterialFlags.OCCLUDER);
         const depthWrite = !!(flags & MaterialFlags.DEPTH_WRITE);
         const useAlphaTest = !!(flags & MaterialFlags.ALPHA_TEST);
@@ -415,13 +416,13 @@ function parseMaterialSet_MP1_MP2(stream: InputStream, resourceSystem: ResourceS
         const ropInfo: GX_Material.RopInfo = {
             fogType: GX.FogType.NONE,
             fogAdjEnabled: false,
-            blendMode: isTransparent ? GX.BlendMode.BLEND : GX.BlendMode.NONE,
+            blendMode: blendDstFactor !== GX.BlendFactor.ZERO ? GX.BlendMode.BLEND : GX.BlendMode.NONE,
             blendSrcFactor,
             blendDstFactor,
             blendLogicOp: GX.LogicOp.CLEAR,
             depthTest: true,
-            depthFunc: GX.CompareType.LESS,
-            depthWrite: depthWrite && !isTransparent,
+            depthFunc: GX.CompareType.LEQUAL,
+            depthWrite: depthWrite && !isDepthSorted,
             colorUpdate: true,
             alphaUpdate: false,
         };
@@ -440,9 +441,13 @@ function parseMaterialSet_MP1_MP2(stream: InputStream, resourceSystem: ResourceS
         const isUVShort = !!(flags & MaterialFlags.UV_SHORT);
         const isWhiteAmb = false;
 
+        // Alpha-blending is biased so that additive blending always appears on top
+        const sortBias = blendSrcFactor == GX.BlendFactor.SRCALPHA && blendDstFactor == GX.BlendFactor.INVSRCALPHA ? 0 : 1;
+
         materials.push({
             isOccluder,
-            isTransparent,
+            isDepthSorted,
+            sortBias,
             isUVShort,
             isWhiteAmb,
             groupIndex,
@@ -636,7 +641,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         // If MP1 and a CSKR is available, generate PNMTXIDX and one TEXnMTXIDX
         const generateMtxIdxs = !isEchoes && cskr;
         let texNMtxIdx: number | undefined = undefined;
-        let texGenNMtxIdx: number | undefined = undefined;
+        let texGenNMtxIdxs: number[] = [];
         let availableMtxSlots = 10;
         if (generateMtxIdxs) {
             vcd[GX.Attr.PNMTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
@@ -654,14 +659,13 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     texNMtxIdx = i;
                     availableMtxSlots = 10 - material.uvAnimations.length + 1;
                     assert(availableMtxSlots >= 3);
+                    material.gxMaterial.useTexMtxIdx = Array(8).fill(false);
                     for (let tg = 0; tg < material.gxMaterial.texGens.length; ++tg) {
                         const texGen = material.gxMaterial.texGens[tg];
                         if (texGen.matrix === GX.TexGenMatrix.TEXMTX0 + 3 * i) {
-                            texGenNMtxIdx = tg;
+                            texGenNMtxIdxs.push(tg);
                             vcd[GX.Attr.TEX0MTXIDX + tg] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
-                            material.gxMaterial.useTexMtxIdx = nArray(8, () => false);
                             material.gxMaterial.useTexMtxIdx[tg] = true;
-                            break;
                         }
                     }
                     break;
@@ -720,7 +724,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             const littleEndian = getSystemEndianness() === Endianness.LITTLE_ENDIAN;
             const vertexStride = loadedVertexLayout.vertexBufferStrides[0];
             const pnMtxIdxOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
-            const texMtxIdxOffs = texGenNMtxIdx !== undefined ? loadedVertexLayout.vertexAttributeOffsets[GX.Attr.TEX0MTXIDX + texGenNMtxIdx] : undefined;
+            const texMtxIdxOffs = texGenNMtxIdxs.map(idx => loadedVertexLayout.vertexAttributeOffsets[GX.Attr.TEX0MTXIDX + idx]);
             let vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
             const indexDataView = new Uint16Array(loadedVertexData.indexData);
 
@@ -780,7 +784,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                 }
 
                 // Modify commit map directly if assured it will not overflow on this triangle.
-                const skinToIndicesMap = skinToIndicesMapCommit.size < 7 ?
+                const skinToIndicesMap = skinToIndicesMapCommit.size < (availableMtxSlots - 3) ?
                     skinToIndicesMapCommit : new Map<number, number[]>(skinToIndicesMapCommit);
 
                 let skinIndexPushes: [number, number][] = [];
@@ -834,8 +838,8 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     if (!relocatedFirst) {
                         // The first matrix index is relocated in-place
                         vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
-                        if (texMtxIdxOffs !== undefined)
-                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOffs, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
+                        for (const texMtxIdxOff of texMtxIdxOffs)
+                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
                         relocatedFirst = true;
                     } else {
                         // Subsequent matrix indices require a duplicate vertex
@@ -843,8 +847,8 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                         new Uint8Array(loadedVertexData.vertexBuffers[0]).set(new Uint8Array(loadedVertexData.vertexBuffers[0],
                             v * vertexStride, vertexStride), newVertexIndex * vertexStride);
                         vertexDataView.setFloat32(newVertexIndex * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
-                        if (texMtxIdxOffs !== undefined)
-                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOffs, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
+                        for (const texMtxIdxOff of texMtxIdxOffs)
+                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
 
                         // Patch all referencing indices to the duplicated vertex
                         for (const i of indexList)
@@ -1667,7 +1671,8 @@ function parseMaterialSet_MP3(stream: InputStream, resourceSystem: ResourceSyste
 
         materials.push({
             isOccluder,
-            isTransparent,
+            isDepthSorted: isTransparent,
+            sortBias: 0,
             isUVShort,
             isWhiteAmb,
             groupIndex,
