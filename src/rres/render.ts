@@ -857,9 +857,9 @@ export class MDL0ModelInstance {
                 if (this.debugBones) {
                     const ctx = getDebugOverlayCanvas2D();
 
-                    vec3.set(scratchVec3a, 0, 0, 0);
+                    vec3.zero(scratchVec3a);
                     vec3.transformMat4(scratchVec3a, scratchVec3a, this.instanceStateData.jointToWorldMatrixArray[parentMtxId]);
-                    vec3.set(scratchVec3b, 0, 0, 0);
+                    vec3.zero(scratchVec3b);
                     vec3.transformMat4(scratchVec3b, scratchVec3b, this.instanceStateData.jointToWorldMatrixArray[dstMtxId]);
 
                     drawWorldSpaceLine(ctx, camera.clipFromWorldMatrix, scratchVec3a, scratchVec3b);

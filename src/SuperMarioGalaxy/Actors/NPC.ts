@@ -5,10 +5,10 @@ import { quat, vec3, ReadonlyVec3 } from 'gl-matrix';
 import * as RARC from '../../Common/JSYSTEM/JKRArchive';
 import { isNearZero, MathConstants, quatFromEulerRadians, Vec3Zero } from '../../MathHelpers';
 import { assertExists, fallback } from '../../util';
-import { adjustmentRailCoordSpeed, blendQuatUpFront, calcGravity, connectToSceneIndirectNpc, connectToSceneNpc, getNextRailPointNo, getRailCoordSpeed, getRailDirection, getRailPos, getRandomInt, initDefaultPos, isBckExist, isBckStopped, isExistRail, isRailReachedGoal, makeMtxTRFromQuatVec, makeQuatUpFront, moveCoordAndTransToNearestRailPos, moveRailRider, reverseRailDirection, setBckFrameAtRandom, setBrkFrameAndStop, startAction, startBck, startBckNoInterpole, startBrk, startBtk, startBva, tryStartAction, turnQuatYDirRad, useStageSwitchSleep, moveCoordToStartPos, useStageSwitchWriteA, useStageSwitchWriteB, useStageSwitchWriteDead, moveCoordAndTransToRailStartPoint, isRailGoingToEnd, getRailPointPosStart, getRailPointPosEnd, calcDistanceVertical, calcMtxFromGravityAndZAxis, tryStartBck, calcUpVec, rotateVecDegree, getBckFrameMax, moveCoordAndFollowTrans, isBckPlaying, startBckWithInterpole, isBckOneTimeAndStopped, MapObjConnector, useStageSwitchReadAppear, syncStageSwitchAppear } from '../ActorUtil';
-import { getFirstPolyOnLineToMap } from '../Collision';
+import { adjustmentRailCoordSpeed, blendQuatUpFront, calcGravity, connectToSceneIndirectNpc, connectToSceneNpc, getNextRailPointNo, getRailCoordSpeed, getRailDirection, getRailPos, getRandomInt, initDefaultPos, isBckExist, isBckStopped, isExistRail, isRailReachedGoal, makeMtxTRFromQuatVec, makeQuatUpFront, moveCoordAndTransToNearestRailPos, moveRailRider, reverseRailDirection, setBckFrameAtRandom, setBrkFrameAndStop, startAction, startBck, startBckNoInterpole, startBrk, startBtk, startBva, tryStartAction, turnQuatYDirRad, useStageSwitchSleep, moveCoordToStartPos, useStageSwitchWriteA, useStageSwitchWriteB, useStageSwitchWriteDead, moveCoordAndTransToRailStartPoint, isRailGoingToEnd, getRailPointPosStart, getRailPointPosEnd, calcDistanceVertical, calcMtxFromGravityAndZAxis, tryStartBck, calcUpVec, rotateVecDegree, getBckFrameMax, moveCoordAndFollowTrans, isBckPlaying, startBckWithInterpole, isBckOneTimeAndStopped, MapObjConnector, useStageSwitchReadAppear, syncStageSwitchAppear, isExistBck } from '../ActorUtil';
+import { getFirstPolyOnLineToMap, getFirstPolyOnLineToWaterSurface } from '../Collision';
 import { createCsvParser, getJMapInfoArg0, getJMapInfoArg1, getJMapInfoArg2, getJMapInfoArg7, JMapInfoIter } from '../JMapInfo';
-import { isDead, LiveActor, makeMtxTRFromActor, ZoneAndLayer, MessageType } from '../LiveActor';
+import { isDead, LiveActor, ZoneAndLayer, MessageType } from '../LiveActor';
 import { getObjectName, SceneObjHolder } from '../Main';
 import { PartsModel } from './MiscActor';
 import { DrawBufferType } from '../NameObj';
@@ -17,6 +17,7 @@ import { isFirstStep, isGreaterStep, isGreaterEqualStep, isLessStep, calcNerveRa
 import { initShadowFromCSV, initShadowVolumeSphere, onCalcShadowOneTime, onCalcShadow, isExistShadow } from '../Shadow';
 import { initLightCtrl } from '../LightData';
 import { HitSensorType, isSensorPlayer, HitSensor, isSensorNpc, sendArbitraryMsg } from '../HitSensor';
+import { drawWorldSpaceVector, getDebugOverlayCanvas2D } from '../../DebugJunk';
 
 // Scratchpad
 const scratchVec3 = vec3.create();
@@ -173,7 +174,7 @@ class NPCActor<TNerve extends number = number> extends LiveActor<TNerve> {
 
         if (caps.initConnectToSceneType === InitConnectToSceneType.Npc)
             connectToSceneNpc(sceneObjHolder, this);
-        /*else if (caps.connectToSceneType === NPCConnectToSceneType.NpcMovement)
+        /*else if (caps.initConnectToSceneType === InitConnectToSceneType.NpcMovement)
             connectToSceneNpcMovement(sceneObjHolder, this);*/
         else if (caps.initConnectToSceneType === InitConnectToSceneType.IndirectNpc)
             connectToSceneIndirectNpc(sceneObjHolder, this);
@@ -222,6 +223,17 @@ class NPCActor<TNerve extends number = number> extends LiveActor<TNerve> {
 
         if (caps.writeDeadSwitch)
             useStageSwitchWriteDead(sceneObjHolder, this, infoIter);
+    }
+
+    public initAfterPlacement(sceneObjHolder: SceneObjHolder): void {
+        calcGravity(sceneObjHolder, this);
+        if (this.waitActionName !== null) {
+            startAction(this, this.waitActionName);
+            if (isExistBck(this, this.waitActionName))
+                startBckNoInterpole(this, this.waitActionName);
+            setBckFrameAtRandom(this);
+            this.calcAnim(sceneObjHolder);
+        }
     }
 
     public setInitPose(): void {
@@ -568,10 +580,6 @@ export class Peach extends NPCActor<PeachNrv> {
 
 function decidePose(actor: NPCActor, up: vec3, front: vec3, pos: vec3, rotationSpeedUp: number, rotationSpeedFront: number, translationSpeed: number): void {
     vec3.lerp(actor.translation, actor.translation, pos, translationSpeed);
-    if (vec3.equals(up, Vec3Zero))
-        debugger;
-    if (Number.isNaN(actor.poseQuat[0]))
-        debugger;
     if (rotationSpeedUp === 1.0 && rotationSpeedFront === 1.0) {
         makeQuatUpFront(actor.poseQuat, up, front);
     } else {
@@ -689,7 +697,7 @@ export class Penguin extends NPCActor<PenguinNrv> {
         super(zoneAndLayer, sceneObjHolder, getObjectName(infoIter));
 
         const objName = this.name;
-        initDefaultPos(sceneObjHolder, this, infoIter);
+        initDefaultPosAndQuat(sceneObjHolder, this, infoIter);
         this.initModelManagerWithAnm(sceneObjHolder, objName);
         connectToSceneNpc(sceneObjHolder, this);
         initLightCtrl(sceneObjHolder, this);
@@ -709,6 +717,9 @@ export class Penguin extends NPCActor<PenguinNrv> {
             this.removableTurtle = new RemovableTurtle(sceneObjHolder, this, false);
             this.removableTurtle.tryAttach(sceneObjHolder);
         }
+
+        startBrk(this, 'ColorChange');
+        setBrkFrameAndStop(this, fallback(getJMapInfoArg7(infoIter), 0));
 
         if (this.mode === 0) {
             this.waitActionName = `SitDown`;
@@ -740,12 +751,8 @@ export class Penguin extends NPCActor<PenguinNrv> {
             this.railGrounded = true;
         }
 
-        setBckFrameAtRandom(this);
-
-        startBrk(this, 'ColorChange');
-        setBrkFrameAndStop(this, fallback(getJMapInfoArg7(infoIter), 0));
-
         this.initNerve(PenguinNrv.Wait);
+        this.makeActorAppeared(sceneObjHolder);
     }
 
     public initAfterPlacement(sceneObjHolder: SceneObjHolder): void {
@@ -753,13 +760,22 @@ export class Penguin extends NPCActor<PenguinNrv> {
 
         if (this.mode === 2 || this.mode === 3) {
             calcGravity(sceneObjHolder, this);
+
             vec3.negate(scratchVec3, this.gravityVector);
             turnQuatYDirRad(this.poseQuat, this.poseQuat, scratchVec3, MathConstants.TAU / 2);
+
+            vec3.scaleAndAdd(scratchVec3a, this.translation, this.gravityVector, -100.0);
+            vec3.scale(scratchVec3b, this.gravityVector, 500.0);
+            getFirstPolyOnLineToWaterSurface(sceneObjHolder, this.translation, null, scratchVec3a, scratchVec3b);
+
+            this.setInitPose();
         }
     }
 
     protected updateSpine(sceneObjHolder: SceneObjHolder, currentNerve: PenguinNrv, deltaTimeFrames: number): void {
         super.updateSpine(sceneObjHolder, currentNerve, deltaTimeFrames);
+
+        // drawWorldSpaceVector(getDebugOverlayCanvas2D(), window.main.viewer.camera.clipFromWorldMatrix, this.translation, this.gravityVector, 100);
 
         if (currentNerve === PenguinNrv.Wait) {
             if (isFirstStep(this)) {

@@ -120,7 +120,7 @@ export interface GfxSamplerDescriptor {
 }
 
 export interface GfxAttachmentDescriptor {
-    format: GfxFormat;
+    pixelFormat: GfxFormat;
     width: number;
     height: number;
     numSamples: number;
@@ -268,12 +268,12 @@ export const enum GfxClipSpaceNearZ {
 }
 
 export interface GfxVendorInfo {
-    platformString: string;
-    bugQuirks: GfxBugQuirks;
-    glslVersion: string;
-    explicitBindingLocations: boolean;
-    separateSamplerTextures: boolean;
-    clipSpaceNearZ: GfxClipSpaceNearZ;
+    readonly platformString: string;
+    readonly bugQuirks: GfxBugQuirks;
+    readonly glslVersion: string;
+    readonly explicitBindingLocations: boolean;
+    readonly separateSamplerTextures: boolean;
+    readonly clipSpaceNearZ: GfxClipSpaceNearZ;
 }
 
 export type GfxPlatformFramebuffer = WebGLFramebuffer;
@@ -287,12 +287,12 @@ export interface GfxNormalizedViewportCoords {
 }
 
 export interface GfxSwapChain {
-    configureSwapChain(width: number, height: number): void;
-    getDevice(): GfxDevice;
-    getOnscreenTexture(): GfxTexture;
     // WebXR requires presenting to a platform-defined framebuffer, for all that is unholy.
     // This hopefully is less terrible in the future. See https://github.com/immersive-web/webxr/issues/896
-    present(platformFramebuffer?: GfxPlatformFramebuffer, viewport?: GfxNormalizedViewportCoords): void;
+    configureSwapChain(width: number, height: number, platformFramebuffer?: GfxPlatformFramebuffer): void;
+    getDevice(): GfxDevice;
+    getOnscreenTexture(): GfxTexture;
+    present(): void;
     createWebXRLayer(webXRSession: XRSession): XRWebGLLayer;
 }
 

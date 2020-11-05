@@ -39,7 +39,7 @@ export class ColorAttachment {
     public height: number = 0;
     public numSamples: number = 0;
 
-    constructor(public format: GfxFormat = GfxFormat.U8_RGBA_RT) {
+    constructor(public pixelFormat: GfxFormat = GfxFormat.U8_RGBA_RT) {
     }
 
     public setParameters(device: GfxDevice, width: number, height: number, numSamples: number = DEFAULT_NUM_SAMPLES): boolean {
@@ -67,7 +67,7 @@ export class DepthStencilAttachment {
     public gfxAttachment: GfxAttachment | null = null;
     public width: number = 0;
     public height: number = 0;
-    public format = GfxFormat.D32F_S8;
+    public pixelFormat = GfxFormat.D32F_S8;
     public numSamples: number = 0;
 
     public setParameters(device: GfxDevice, width: number, height: number, numSamples: number = DEFAULT_NUM_SAMPLES): boolean {

@@ -1158,21 +1158,30 @@ export interface TextureListHolder {
 }
 
 class FrameDebouncer {
-    private queued: boolean = false;
+    private timeoutId: number | null = null;
     public callback: (() => void) | null = null;
+
+    constructor(public timeout = 100) {
+    }
 
     private onframe = (): void => {
         if (this.callback !== null)
             this.callback();
-        this.queued = false;
+        this.timeoutId = null;
     }
 
     public trigger(): void {
-        if (this.queued)
-            return;
+        if (this.timeoutId !== null)
+            this.clear();
         if (this.callback !== null)
-            window.requestAnimationFrame(this.onframe);
-        this.queued = true;
+            this.timeoutId = setTimeout(this.onframe, this.timeout);
+    }
+
+    public clear() {
+        if (this.timeoutId === null)
+            return;
+        clearTimeout(this.timeoutId);
+        this.timeoutId = null;
     }
 }
 

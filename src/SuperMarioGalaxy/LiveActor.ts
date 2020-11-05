@@ -515,7 +515,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
         // Do nothing by default.
     }
 
-    public getSensor(name: string): HitSensor | null {
+    public getSensor(name: string | null): HitSensor | null {
         if (this.hitSensorKeeper !== null)
             return this.hitSensorKeeper.getSensor(name);
         else
@@ -548,7 +548,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
     }
 
     public makeActorDead(sceneObjHolder: SceneObjHolder): void {
-        vec3.set(this.velocity, 0, 0, 0);
+        vec3.zero(this.velocity);
         if (this.hitSensorKeeper !== null) {
             this.hitSensorKeeper.clear();
             this.hitSensorKeeper.invalidateBySystem();
@@ -596,7 +596,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
     }
 
     protected offScenario(sceneObjHolder: SceneObjHolder): void {
-        vec3.set(this.velocity, 0, 0, 0);
+        // vec3.zero(this.velocity);
         if (this.hitSensorKeeper !== null) {
             this.hitSensorKeeper.clear();
             this.hitSensorKeeper.invalidateBySystem();
@@ -826,7 +826,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
                 this.initWaitPhase -= deltaTimeFrames;
             } else {
                 this.spine.changeNerve();
-                this.updateSpine(sceneObjHolder, this.getCurrentNerve(), deltaTimeFrames);
+                this.updateSpine(sceneObjHolder, this.spine.getCurrentNerve(), deltaTimeFrames);
                 this.spine.updateTick(deltaTimeFrames);
                 this.spine.changeNerve();
             }

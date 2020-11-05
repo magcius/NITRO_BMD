@@ -496,7 +496,7 @@ export class LensFlareDirector extends NameObj {
 }
 
 export function createLensFlareArea(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): NameObj {
-    return new LensFlareArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.CubeGround);
+    return new LensFlareArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.OriginCube);
 }
 
 export function requestArchivesLensFlareArea(sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): void {

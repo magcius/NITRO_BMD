@@ -109,6 +109,7 @@ export const enum DrawType {
     ElectricRailHolder             = 0x0E,
     WarpPodPath                    = 0x18,
     WaterPlant                     = 0x1B,
+    EyeBeamer                      = 0x1C,
     Flag                           = 0x1D,
     AstroDomeSkyClear              = 0x1E,
     AstroDomeOrbit                 = 0x1F,

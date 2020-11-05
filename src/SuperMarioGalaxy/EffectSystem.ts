@@ -17,6 +17,8 @@ import { XanimePlayer } from './Animation';
 import { getJointMtxByName } from './ActorUtil';
 import { Texture } from '../viewer';
 import { Binder, Triangle, getFloorCodeIndex, FloorCode } from './Collision';
+import { Frustum } from '../Geometry';
+import { LoopMode } from '../Common/JSYSTEM/J3D/J3DLoader';
 
 export class ParticleResourceHolder {
     private effectNameToIndex = new Map<string, number>();
@@ -413,7 +415,7 @@ export class MultiEmitter {
     public startFrame: number;
     public endFrame: number;
     public continueAnimEnd: boolean;
-    public bckName: string | null = null;
+    public currentBckName: string | null = null;
     public emitterCallBack = new MultiEmitterCallBack();
 
     constructor(sceneObjHolder: SceneObjHolder, effectName: string) {
@@ -662,23 +664,30 @@ function isCreate(multiEmitter: MultiEmitter, currentBckName: string | null, xan
     return false;
 }
 
+function isBckLoop(xanimePlayer: XanimePlayer, bckName: string | null): boolean {
+    if (bckName === null)
+        return false;
+
+    const bckRes = assertExists(xanimePlayer.resTable.get(bckName));
+    return bckRes.loopMode === LoopMode.REPEAT || bckRes.loopMode === LoopMode.MIRRORED_REPEAT;
+}
+
 function isDelete(multiEmitter: MultiEmitter, currentBckName: string | null, xanimePlayer: XanimePlayer, deltaTimeFrames: number): boolean {
-    if (!isRegisteredBck(multiEmitter, currentBckName)) {
-        // TODO(jstpierre): isBckLoop.
+    if (isRegisteredBck(multiEmitter, currentBckName)) {
+        if (multiEmitter.endFrame >= 0 || !isBckLoop(xanimePlayer, currentBckName))
+            return checkPass(xanimePlayer, multiEmitter.endFrame, deltaTimeFrames);
+    } else {
+        if (multiEmitter.continueAnimEnd ) {
+            const actualCurrentBckName = xanimePlayer.getCurrentBckName();
+            if (actualCurrentBckName === null)
+                return false;
 
-        if (!multiEmitter.continueAnimEnd)
-            return multiEmitter.bckName !== currentBckName;
-
-        const actualCurrentBckName = xanimePlayer.getCurrentBckName();
-        if (actualCurrentBckName === null)
-            return false;
-
-        if (!isRegisteredBck(multiEmitter, actualCurrentBckName))
-            return xanimePlayer.isTerminate(actualCurrentBckName);
+            if (!isRegisteredBck(multiEmitter, actualCurrentBckName.toLowerCase()))
+                return xanimePlayer.isTerminate(actualCurrentBckName);
+        } else {
+            return multiEmitter.currentBckName !== currentBckName;
+        }
     }
-
-    if (multiEmitter.endFrame >= 0)
-        return checkPass(xanimePlayer, multiEmitter.endFrame, deltaTimeFrames);
 
     return false;
 }
@@ -796,6 +805,11 @@ export class EffectKeeper {
             multiEmitter.forceDeleteEmitter(sceneObjHolder.effectSystem!);
     }
 
+    public forceDeleteEmitterAll(sceneObjHolder: SceneObjHolder): void {
+        for (let i = 0; i < this.multiEmitters.length; i++)
+            this.multiEmitters[i].forceDeleteEmitter(sceneObjHolder.effectSystem!);
+    }
+
     public deleteEmitterAll(): void {
         for (let i = 0; i < this.multiEmitters.length; i++)
             this.multiEmitters[i].deleteEmitter();
@@ -831,7 +845,7 @@ export class EffectKeeper {
         if (isDelete(multiEmitter, this.currentBckName, xanimePlayer, deltaTimeFrames))
             multiEmitter.deleteEmitter();
 
-        multiEmitter.bckName = this.currentBckName;
+        multiEmitter.currentBckName = this.currentBckName;
     }
 
     private updateSyncBckEffect(effectSystem: EffectSystem, deltaTimeFrames: number): void {
@@ -963,6 +977,7 @@ export class EffectSystem extends NameObj {
     public particleEmitterHolder: ParticleEmitterHolder;
     public emitterManager: JPA.JPAEmitterManager;
     public drawInfo = new JPA.JPADrawInfo();
+    private emitterCount = 0;
 
     constructor(sceneObjHolder: SceneObjHolder) {
         super(sceneObjHolder, 'EffectSystem');
@@ -996,9 +1011,10 @@ export class EffectSystem extends NameObj {
         this.emitterManager.calc(deltaTime);
     }
 
-    public setDrawInfo(posCamMtx: mat4, prjMtx: mat4, texPrjMtx: mat4 | null): void {
+    public setDrawInfo(posCamMtx: mat4, prjMtx: mat4, texPrjMtx: mat4 | null, frustum: Frustum): void {
         this.drawInfo.posCamMtx = posCamMtx;
         this.drawInfo.texPrjMtx = texPrjMtx;
+        this.drawInfo.frustum = frustum;
     }
 
     public drawEmitters(device: GfxDevice, renderInstManager: GfxRenderInstManager, groupID: number): void {
@@ -1139,6 +1155,12 @@ export function forceDeleteEffect(sceneObjHolder: SceneObjHolder, actor: LiveAct
     if (actor.effectKeeper === null)
         return;
     actor.effectKeeper.forceDeleteEmitter(sceneObjHolder, name);
+}
+
+export function forceDeleteEffectAll(sceneObjHolder: SceneObjHolder, actor: LiveActor): void {
+    if (actor.effectKeeper === null)
+        return;
+    actor.effectKeeper.forceDeleteEmitterAll(sceneObjHolder);
 }
 
 export function deleteEffectAll(actor: LiveActor): void {

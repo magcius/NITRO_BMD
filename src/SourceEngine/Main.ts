@@ -986,7 +986,6 @@ export class SourceRenderer implements SceneGfx {
         gammaCorrectRenderInst.setMegaStateFlags(fullscreenMegaState);
         gammaCorrectRenderInst.drawPrimitives(3);
         gammaCorrectRenderInst.drawOnPass(device, cache, passRenderer);
-        this.renderHelper.renderInstManager.returnRenderInst(gammaCorrectRenderInst);
         device.submitPass(passRenderer);
 
         this.renderHelper.renderInstManager.resetRenderInsts();

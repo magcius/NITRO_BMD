@@ -10,9 +10,9 @@ import { SceneObjHolder, getDeltaTimeFrames } from './Main';
 import { ViewerRenderInput } from '../viewer';
 import { moveCoordAndTransToNearestRailPos, moveCoordAndTransToNearestRailPoint, moveCoordAndTransToRailStartPoint, getRailCoord, setRailCoord, getRailPos, reverseRailDirection, isRailGoingToEnd, getCurrentRailPointNo, getRailPartLength, getRailCoordSpeed, moveCoordAndFollowTrans, setRailCoordSpeed, moveCoordToStartPos, getCurrentRailPointArg0, getCurrentRailPointArg1, getCurrentRailPointArg5, getCurrentRailPointArg7, calcRailPosAtCoord, getRailTotalLength, connectToSceneMapObjNoMovement, moveCoord, calcGravityVector, getRailDirection, isSameDirection } from './ActorUtil';
 import { calcDropShadowVectorOrZero } from './Shadow';
+import { getRailArg } from './RailRider';
 
 export const enum MoveConditionType { Unconditionally, WaitForPlayerOn }
-
 export function getMapPartsArgMoveConditionType(infoIter: JMapInfoIter): MoveConditionType {
     return fallback(infoIter.getValueNumberNoInit('MoveConditionType'), MoveConditionType.Unconditionally);
 }
@@ -29,15 +29,13 @@ function hasMapPartsMoveStartSignMotion(signMotionType: SignMotionType): boolean
 }
 
 const enum MoveStopType { OnceAndWait, Mirror, Loop, OnceAndVanish }
-
 function getMapPartsArgMoveStopType(actor: LiveActor): MoveStopType {
-    return fallback(actor.railRider!.bezierRail.railIter.getValueNumberNoInit('path_arg1'), MoveStopType.Mirror);
+    return fallback(getRailArg(actor.railRider!, 'path_arg1'), MoveStopType.Mirror);
 }
 
 export const enum RailGuideType { None, Draw, DrawForward, DrawPoints }
-
 export function getMapPartsArgRailGuideType(actor: LiveActor): RailGuideType {
-    return fallback(actor.railRider!.bezierRail.railIter.getValueNumberNoInit('path_arg2'), RailGuideType.None);
+    return fallback(getRailArg(actor.railRider!, 'path_arg2'), RailGuideType.None);
 }
 
 function getMapPartsArgMoveSpeed(actor: LiveActor): number | null {
@@ -67,10 +65,8 @@ function getMoveStartSignalTime(): number {
 }
 
 const enum RailInitPosType { NearestPos, NearestPoint, Point0 }
-
 function getMapPartsArgRailInitPosType(actor: LiveActor): RailInitPosType {
-    const railRider = assertExists(actor.railRider);
-    return fallback(railRider.bezierRail.railIter.getValueNumberNoInit('path_arg4'), RailInitPosType.NearestPos);
+    return fallback(getRailArg(actor.railRider!, 'path_arg4'), RailInitPosType.NearestPos);
 }
 
 const enum AxisType { X, Y, Z }
@@ -255,7 +251,7 @@ export class MapPartsRotator extends MapPartsFunction<MapPartsRotatorNrv> {
 
 export const enum MovePostureType { None, RailDirRail, RailDir, RailDirRailUseShadowGravity }
 export function getMapPartsArgMovePosture(actor: LiveActor): MovePostureType {
-    return fallback(actor.railRider!.bezierRail.railIter.getValueNumberNoInit('path_arg0'), MovePostureType.None);
+    return fallback(getRailArg(actor.railRider!, 'path_arg0'), MovePostureType.None);
 }
 
 const enum MapPartsRailPostureNrv { DoNothing, Move }
@@ -321,7 +317,7 @@ export class MapPartsRailPosture extends MapPartsFunction<MapPartsRailPostureNrv
     }
 }
 
-class MapPartsRailPointPassChecker {
+export class MapPartsRailPointPassChecker {
     public currentRailPointId: number = -1;
 
     constructor(private actor: LiveActor) {

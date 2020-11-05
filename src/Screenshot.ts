@@ -45,3 +45,7 @@ export function downloadTextureToCanvas(gl: WebGL2RenderingContext, texture: Web
     readPixelsCommon(gl, width, height, canvas, opaque);
     gl.deleteFramebuffer(fb);
 }
+
+export function downloadFrontBufferToCanvas(gl: WebGL2RenderingContext, width: number, height: number, canvas: HTMLCanvasElement, opaque: boolean): void {
+    readPixelsCommon(gl, width, height, canvas, opaque);
+}

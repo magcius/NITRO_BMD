@@ -217,6 +217,7 @@ export class GfxRenderInst {
         this.sortKey = 0;
         this.filterKey = 0;
         this._renderPipeline = null;
+        this._flags = 0;
     }
 
     /**
@@ -449,8 +450,6 @@ export class GfxRenderInst {
     }
 
     public drawOnPassWithState(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass, state: GfxRendererTransientState): void {
-        assert(!!(this._flags & GfxRenderInstFlags.Draw));
-
         if (this._renderPipeline !== null) {
             state.currentRenderPipelineDescriptor = null;
             const ready = device.queryPipelineReady(this._renderPipeline);
@@ -497,8 +496,6 @@ export class GfxRenderInst {
     }
 
     public drawOnPass(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass): boolean {
-        assert(!!(this._flags & GfxRenderInstFlags.Draw));
-
         if (this._renderPipeline !== null) {
             passRenderer.setPipeline(this._renderPipeline);
         } else {
@@ -679,7 +676,6 @@ export class GfxRenderInstManager {
             renderInst.setFromTemplate(this.templatePool.pool[templateIndex]);
         else
             renderInst.reset();
-        renderInst._flags |= GfxRenderInstFlags.Draw;
         return renderInst;
     }
 
@@ -689,6 +685,7 @@ export class GfxRenderInstManager {
      * after submitting it.
      */
     public submitRenderInst(renderInst: GfxRenderInst): void {
+        renderInst._flags |= GfxRenderInstFlags.Draw;
         this.currentRenderInstList.insertSorted(renderInst);
     }
 
@@ -702,19 +699,6 @@ export class GfxRenderInstManager {
     public setCurrentRenderInstList(list: GfxRenderInstList): void {
         assert(this.simpleRenderInstList === null);
         this.currentRenderInstList = list;
-    }
-
-    /**
-     * Returns a render instance to the pool after being used. This should be
-     * used in scenarios where the render inst is not submitted to any draw lists,
-     * like calling {@param drawOnPass} manually on the render inst.
-     */
-    public returnRenderInst(renderInst: GfxRenderInst): void {
-        renderInst._flags = 0;
-
-        // We leave it completely dead for now, since we don't expect to see too many "returned" instances.
-        // That said, if this is ever a memory pressure, we can have allocRenderInst allocate from dead items
-        // again...
     }
 
     /**

@@ -1,12 +1,10 @@
 
-import { GfxBufferUsage, GfxBindingLayoutDescriptor, GfxBufferFrequencyHint, GfxTexFilterMode, GfxMipFilterMode, GfxPrimitiveTopology, GfxSwapChain, GfxDevice, GfxSamplerDescriptor, GfxWrapMode, GfxVertexBufferDescriptor, GfxRenderPipelineDescriptor, GfxBufferBinding, GfxSamplerBinding, GfxDeviceLimits, GfxVertexAttributeDescriptor, GfxLoadDisposition, GfxRenderPass, GfxPass, GfxHostAccessPass, GfxMegaStateDescriptor, GfxCompareMode, GfxBlendMode, GfxCullMode, GfxBlendFactor, GfxVertexBufferFrequency, GfxRenderPassDescriptor, GfxTextureDescriptor, GfxTextureDimension, makeTextureDescriptor2D, GfxBindingsDescriptor, GfxDebugGroup, GfxInputLayoutDescriptor, GfxAttachmentState as GfxAttachmentStateDescriptor, GfxColorWriteMask, GfxPlatformFramebuffer, GfxVendorInfo, GfxInputLayoutBufferDescriptor, GfxIndexBufferDescriptor, GfxChannelBlendState, GfxProgramDescriptor, GfxBugQuirks, GfxProgramDescriptorSimple, GfxAttachmentDescriptor, GfxClipSpaceNearZ, GfxNormalizedViewportCoords } from './GfxPlatform';
+import { GfxBufferUsage, GfxBindingLayoutDescriptor, GfxBufferFrequencyHint, GfxTexFilterMode, GfxMipFilterMode, GfxPrimitiveTopology, GfxSwapChain, GfxDevice, GfxSamplerDescriptor, GfxWrapMode, GfxVertexBufferDescriptor, GfxRenderPipelineDescriptor, GfxBufferBinding, GfxSamplerBinding, GfxDeviceLimits, GfxVertexAttributeDescriptor, GfxLoadDisposition, GfxRenderPass, GfxPass, GfxHostAccessPass, GfxMegaStateDescriptor, GfxCompareMode, GfxBlendMode, GfxCullMode, GfxBlendFactor, GfxVertexBufferFrequency, GfxRenderPassDescriptor, GfxTextureDescriptor, GfxTextureDimension, makeTextureDescriptor2D, GfxBindingsDescriptor, GfxDebugGroup, GfxInputLayoutDescriptor, GfxAttachmentState as GfxAttachmentStateDescriptor, GfxColorWriteMask, GfxPlatformFramebuffer, GfxVendorInfo, GfxInputLayoutBufferDescriptor, GfxIndexBufferDescriptor, GfxChannelBlendState, GfxProgramDescriptor, GfxProgramDescriptorSimple, GfxAttachmentDescriptor, GfxClipSpaceNearZ, GfxNormalizedViewportCoords } from './GfxPlatform';
 import { _T, GfxBuffer, GfxTexture, GfxAttachment, GfxSampler, GfxProgram, GfxInputLayout, GfxInputState, GfxRenderPipeline, GfxBindings, GfxResource, GfxBugQuirksImpl, GfxReadback } from "./GfxPlatformImpl";
 import { GfxFormat, getFormatCompByteSize, FormatTypeFlags, FormatCompFlags, FormatFlags, getFormatTypeFlags, getFormatCompFlags, getFormatFlags } from "./GfxPlatformFormat";
 
-import { gfxColorEqual, range, assert, assertExists, leftPad, gfxColorCopy } from './GfxPlatformUtil';
-import { copyMegaState, defaultMegaState, fullscreenMegaState } from '../helpers/GfxMegaStateDescriptorHelpers';
-import { preprocessProgram_GLSL } from '../shaderc/GfxShaderCompiler';
-import { IdentityViewportCoords } from '../helpers/RenderTargetHelpers';
+import { gfxColorEqual, range, assert, assertExists, leftPad, gfxColorCopy, nullify } from './GfxPlatformUtil';
+import { copyMegaState, defaultMegaState } from '../helpers/GfxMegaStateDescriptorHelpers';
 
 // This is a workaround for ANGLE not supporting UBOs greater than 64kb (the limit of D3D).
 // https://bugs.chromium.org/p/angleproject/issues/detail?id=3388
@@ -553,6 +551,7 @@ interface EXT_texture_compression_rgtc {
 class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     // Configuration
     private _shaderDebug = false;
+    private _contextAttributes: WebGLContextAttributes;
 
     // GL extension
     private _WEBGL_compressed_texture_s3tc: WEBGL_compressed_texture_s3tc | null = null;
@@ -566,11 +565,8 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     private _renderPassPool: GfxRenderPassP_GL[] = [];
 
     // Swap Chain
-    private _fullscreenCopyMegaState = fullscreenMegaState;
-    private _fullscreenCopyProgram: GfxProgramP_GL;
-    private _scWidth: number = 0;
-    private _scHeight: number = 0;
     private _scTexture: GfxTexture | null = null;
+    private _scPlatformFramebuffer: WebGLFramebuffer | null = null;
 
     // GfxDevice
     private _currentActiveTexture: GLenum | null = null;
@@ -579,7 +575,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     private _resourceCreationTracker: ResourceCreationTracker | null = null;
     private _resourceUniqueId = 0;
 
-    // Pass Execution
+    // Cached GL driver state
     private _currentColorAttachments: GfxAttachmentP_GL[] = [];
     private _currentColorResolveTos: (GfxTextureP_GL | null)[] = [];
     private _currentDepthStencilAttachment: GfxAttachmentP_GL | null;
@@ -592,6 +588,8 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     private _currentUniformBuffers: GfxBuffer[] = [];
     private _currentUniformBufferByteOffsets: number[] = [];
     private _currentUniformBufferByteSizes: number[] = [];
+
+    // Pass Execution
     private _debugGroupStack: GfxDebugGroup[] = [];
     private _resolveColorAttachmentsChanged: boolean = false;
     private _resolveColorReadFramebuffer: WebGLFramebuffer;
@@ -604,14 +602,16 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     private _blackTexture!: WebGLTexture;
 
     // GfxVendorInfo
-    public platformString: string = 'WebGL2';
-    public bugQuirks = new GfxBugQuirksImpl();
-    public glslVersion = `#version 300 es`;
-    public explicitBindingLocations = false;
-    public separateSamplerTextures = false;
-    public clipSpaceNearZ = GfxClipSpaceNearZ.NegativeOne;
+    public readonly platformString: string = 'WebGL2';
+    public readonly bugQuirks = new GfxBugQuirksImpl();
+    public readonly glslVersion = `#version 300 es`;
+    public readonly explicitBindingLocations = false;
+    public readonly separateSamplerTextures = false;
+    public readonly clipSpaceNearZ = GfxClipSpaceNearZ.NegativeOne;
 
     constructor(public gl: WebGL2RenderingContext, configuration: GfxPlatformWebGL2Config) {
+        this._contextAttributes = assertExists(gl.getContextAttributes());
+
         this._WEBGL_compressed_texture_s3tc = gl.getExtension('WEBGL_compressed_texture_s3tc');
         this._WEBGL_compressed_texture_s3tc_srgb = gl.getExtension('WEBGL_compressed_texture_s3tc_srgb');
         this._EXT_texture_compression_rgtc = gl.getExtension('EXT_texture_compression_rgtc');
@@ -619,28 +619,14 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
         this._uniformBufferMaxPageByteSize = Math.min(gl.getParameter(gl.MAX_UNIFORM_BLOCK_SIZE), UBO_PAGE_MAX_BYTE_SIZE);
 
-        const fullscreenVS: string = `
-out vec2 v_TexCoord;
-
-void main() {
-    v_TexCoord.x = (gl_VertexID == 1) ? 2.0 : 0.0;
-    v_TexCoord.y = (gl_VertexID == 2) ? 2.0 : 0.0;
-    gl_Position.xy = v_TexCoord * vec2(2) - vec2(1);
-    gl_Position.zw = vec2(1, 1);
-}
-`;
-        const fullscreenFS: string = `
-uniform sampler2D u_Texture;
-in vec2 v_TexCoord;
-
-void main() {
-    vec4 t_Color = texture(SAMPLER_2D(u_Texture), v_TexCoord);
-    gl_FragColor = vec4(t_Color.rgb, 1.0);
-}
-`;
-
-        const fullscreenProgramDescriptor = preprocessProgram_GLSL(this.queryVendorInfo(), fullscreenVS, fullscreenFS);
-        this._fullscreenCopyProgram = this._createProgram(fullscreenProgramDescriptor);
+        // Create our fake swap-chain texture.
+        this._scTexture = {
+            _T: _T.Texture,
+            ResourceUniqueId: this.getNextUniqueId(),
+            width: 0, height: 0, depth: 1, numLevels: 1,
+            gl_target: null!, gl_texture: null!,
+            pixelFormat: (this._contextAttributes.alpha === false) ? GfxFormat.U8_RGB_RT : GfxFormat.U8_RGBA_RT,
+        } as GfxTextureP_GL;
 
         this._resolveColorReadFramebuffer = this.ensureResourceExists(gl.createFramebuffer());
         this._resolveColorDrawFramebuffer = this.ensureResourceExists(gl.createFramebuffer());
@@ -674,23 +660,11 @@ void main() {
     }
 
     //#region GfxSwapChain
-    public configureSwapChain(width: number, height: number): void {
-        if (this._scWidth !== width || this._scHeight !== height) {
-            const gl = this.gl;
-
-            this._scWidth = width;
-            this._scHeight = height;
-
-            if (this._scTexture !== null)
-                this._destroyTexture(this._scTexture);
-
-            this._scTexture = this._createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_RT, this._scWidth, this._scHeight, 1));
-            gl.bindTexture(gl.TEXTURE_2D, getPlatformTexture(this._scTexture));
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        }
+    public configureSwapChain(width: number, height: number, platformFramebuffer?: GfxPlatformFramebuffer): void {
+        const texture = this._scTexture as GfxTextureP_GL;
+        texture.width = width;
+        texture.height = height;
+        this._scPlatformFramebuffer = nullify(platformFramebuffer);
     }
 
     public getDevice(): GfxDevice {
@@ -701,32 +675,18 @@ void main() {
         return this._scTexture!;
     }
 
-    public present(platformFramebuffer?: GfxPlatformFramebuffer, viewport?: GfxNormalizedViewportCoords): void {
-        if (platformFramebuffer !== undefined) {
-            const gl = this.gl;
-            // TODO(jstpierre): Find a way to copy the depth buffer to WebXR.
-            gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, platformFramebuffer);
-            this.blitFullscreenTexture(this._scTexture!, viewport);
-            gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-        } else {
-            this.blitFullscreenTexture(this._scTexture!);
-        }
-    }
-
-    private blitFullscreenTexture(texture: GfxTexture, viewport: GfxNormalizedViewportCoords | null = null): void {
+    public present(): void {
         const gl = this.gl;
-        this._setMegaState(this._fullscreenCopyMegaState);
-        this._setActiveTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, getPlatformTexture(texture));
-        gl.bindSampler(0, null);
-        gl.disable(gl.SCISSOR_TEST);
-        if (viewport === null)
-            viewport = IdentityViewportCoords;
-        gl.viewport(viewport.x * this._scWidth, viewport.y * this._scHeight, viewport.w * this._scWidth, viewport.h * this._scHeight);
-        this._currentTextures[0] = null;
-        this._currentSamplers[0] = null;
-        this._useProgram(this._fullscreenCopyProgram);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        // Force alpha to white.
+
+        // TODO(jstpierre): Remove this eventually?
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        if (this._currentMegaState.attachmentsState[0].colorWriteMask !== GfxColorWriteMask.ALPHA) {
+            gl.colorMask(false, false, false, true);
+            this._currentMegaState.attachmentsState[0].colorWriteMask = GfxColorWriteMask.ALPHA;
+        }
+        gl.clear(gl.COLOR_BUFFER_BIT);
     }
     //#endregion
 
@@ -752,6 +712,7 @@ void main() {
         case GfxFormat.U8_RG_NORM:
             return WebGL2RenderingContext.RG8;
         case GfxFormat.U8_RGB_NORM:
+        case GfxFormat.U8_RGB_RT:
             return WebGL2RenderingContext.RGB8;
         case GfxFormat.U8_RGB_SRGB:
             return WebGL2RenderingContext.SRGB8;
@@ -1026,7 +987,7 @@ void main() {
     }
 
     public createAttachment(descriptor: GfxAttachmentDescriptor): GfxAttachment {
-        const width = descriptor.width, height = descriptor.height, format = descriptor.format, numSamples = descriptor.numSamples;
+        const width = descriptor.width, height = descriptor.height, format = descriptor.pixelFormat, numSamples = descriptor.numSamples;
         const gl = this.gl;
 
         const gl_renderbuffer = this.ensureResourceExists(gl.createRenderbuffer());
@@ -1925,22 +1886,37 @@ void main() {
 
             if (colorResolveTo !== null) {
                 assert(colorResolveFrom.width === colorResolveTo.width && colorResolveFrom.height === colorResolveTo.height);
+                assert(colorResolveFrom.pixelFormat === colorResolveTo.pixelFormat);
                 assert(colorResolveFrom.gl_renderbuffer !== null);
 
                 gl.disable(gl.SCISSOR_TEST);
                 gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this._resolveColorReadFramebuffer);
-                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this._resolveColorDrawFramebuffer);
 
-                if (this._resolveColorAttachmentsChanged) {
-                    gl.framebufferRenderbuffer(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, colorResolveFrom.gl_renderbuffer);
-                    gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorResolveTo.gl_texture, 0);
+                // Special case: Blitting to the on-screen.
+                if (colorResolveTo === this._scTexture) {
+                    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this._scPlatformFramebuffer);
+
+                    if (this._resolveColorAttachmentsChanged) {
+                        gl.framebufferRenderbuffer(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, colorResolveFrom.gl_renderbuffer);
+                    }
+
+                    gl.blitFramebuffer(0, 0, colorResolveFrom.width, colorResolveFrom.height, 0, 0, colorResolveTo.width, colorResolveTo.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+                    didUnbind = true;
+                } else {
+                    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this._resolveColorDrawFramebuffer);
+
+                    if (this._resolveColorAttachmentsChanged) {
+                        gl.framebufferRenderbuffer(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, colorResolveFrom.gl_renderbuffer);
+                        gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorResolveTo.gl_texture, 0);
+                    }
+
+                    gl.blitFramebuffer(0, 0, colorResolveFrom.width, colorResolveFrom.height, 0, 0, colorResolveTo.width, colorResolveTo.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+
+                    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+                    didUnbind = true;
                 }
 
-                gl.blitFramebuffer(0, 0, colorResolveFrom.width, colorResolveFrom.height, 0, 0, colorResolveTo.width, colorResolveTo.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
-
                 gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-                didUnbind = true;
             }
         }
 

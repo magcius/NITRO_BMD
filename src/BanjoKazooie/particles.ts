@@ -63,9 +63,6 @@ class Particle {
     public init(manager: EmitterManager, type: ParticleType, matrix: mat4, flipbookIndex = 0): void {
         this.type = type;
         mat4.copy(this.modelMatrix, matrix);
-        vec3.set(this.velocity, 0, 0, 0);
-        vec3.set(this.targetVelocity, 0, 0, 0);
-        vec3.set(this.accel, 0, 0, 0);
 
         this.scaleX = 0;
         this.scaleY = 0;

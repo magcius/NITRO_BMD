@@ -324,7 +324,7 @@ export class FPSCameraController implements CameraController {
     public sceneMoveSpeedMult = 1;
 
     public cameraUpdateForced(): void {
-        vec3.set(this.keyMovement, 0, 0, 0);
+        vec3.zero(this.keyMovement);
     }
 
     public setSceneMoveSpeedMult(v: number): void {
@@ -435,7 +435,7 @@ export class FPSCameraController implements CameraController {
 
         if (!vec3.exactEquals(keyMovement, Vec3Zero)) {
             const finalMovement = scratchVec3a;
-            vec3.set(finalMovement, 0, 0, 0);
+            vec3.zero(finalMovement);
 
             vec3.scaleAndAdd(finalMovement, finalMovement, viewRight, keyMovement[0]);
             vec3.scaleAndAdd(finalMovement, finalMovement, viewForward, keyMovement[2]);
@@ -750,7 +750,7 @@ export class OrbitCameraController implements CameraController {
             this.xVel = this.yVel = 0;
             this.txVel = this.tyVel = 0;
             this.xVel = this.yVel = this.zVel = 0;
-            vec3.set(this.translation, 0, 0, 0);
+            vec3.zero(this.translation);
         }
 
         const shouldOrbit = this.shouldOrbit;
@@ -916,7 +916,7 @@ export class OrthoCameraController implements CameraController {
 
         if (inputManager.isKeyDownEventTriggered('KeyB')) {
             this.txVel = this.tyVel = 0;
-            vec3.set(this.translation, 0, 0, 0);
+            vec3.zero(this.translation);
         }
 
         const shouldOrbit = this.shouldOrbit;

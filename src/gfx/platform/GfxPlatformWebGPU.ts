@@ -653,12 +653,12 @@ class GfxImplP_WebGPU implements GfxSwapChain, GfxDevice {
     private _fallbackSampler: GfxSampler;
 
     // GfxVendorInfo
-    public platformString: string = 'WebGPU';
-    public bugQuirks = new GfxBugQuirksImpl();
-    public glslVersion = `#version 450`;
-    public explicitBindingLocations = true;
-    public separateSamplerTextures = true;
-    public clipSpaceNearZ = GfxClipSpaceNearZ.Zero;
+    public readonly platformString: string = 'WebGPU';
+    public readonly bugQuirks = new GfxBugQuirksImpl();
+    public readonly glslVersion = `#version 450`;
+    public readonly explicitBindingLocations = true;
+    public readonly separateSamplerTextures = true;
+    public readonly clipSpaceNearZ = GfxClipSpaceNearZ.Zero;
 
     constructor(private adapter: GPUAdapter, private device: GPUDevice, private canvasContext: GPUCanvasContext, private glslang: Glslang) {
         this._swapChain = this.canvasContext.configureSwapChain({ device, format: 'bgra8unorm' });
@@ -751,7 +751,7 @@ class GfxImplP_WebGPU implements GfxSwapChain, GfxDevice {
     }
 
     public createAttachment(descriptor: GfxAttachmentDescriptor): GfxAttachment {
-        const width = descriptor.width, height = descriptor.height, format = descriptor.format, numSamples = descriptor.numSamples;
+        const width = descriptor.width, height = descriptor.height, format = descriptor.pixelFormat, numSamples = descriptor.numSamples;
         const gpuTexture = this.device.createTexture({
             size: [width, height, 1],
             sampleCount: numSamples,

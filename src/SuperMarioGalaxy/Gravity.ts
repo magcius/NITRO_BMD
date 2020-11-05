@@ -928,10 +928,10 @@ class DiskGravity extends PlanetGravity {
         this.validCos = Math.cos(theta);
 
         // Orthonormalize the side direction.
-        // NOTE(jstpierre): I'm quite sure sideDirection and segmentDirection will already be orthonormal...
+        // NOTE(jstpierre): I'm quite sure sideDirection and localDirection will already be orthonormal...
         vecKillElement(scratchVec3b, this.sideDirection, this.localDirection);
 
-        mat4.fromRotation(scratchMatrix, theta, this.sideDirection);
+        mat4.fromRotation(scratchMatrix, theta, this.localDirection);
         vec3.transformMat4(this.sideDirectionOrtho, scratchVec3b, scratchMatrix);
     }
 

@@ -37,6 +37,7 @@ import { GXMaterialBuilder } from "../../gx/GXMaterialBuilder";
 import { BTIData, BTI } from "./JUTTexture";
 import { VertexAttributeInput } from "../../gx/gx_displaylist";
 import { dfRange, dfShow } from "../../DebugFloaters";
+import { Frustum } from "../../Geometry";
 
 const SORT_PARTICLES = false;
 
@@ -846,6 +847,7 @@ class JPAEmitterWorkData {
     public ybbCamMtx = mat4.create();
     public posCamMtx = mat4.create();
     public texPrjMtx = mat4.create();
+    public frustum: Frustum | null = null;
     public deltaTime: number = 0;
 
     public prevParticlePos = vec3.create();
@@ -858,7 +860,8 @@ class JPAEmitterWorkData {
 
 export class JPADrawInfo {
     public posCamMtx: mat4;
-    public texPrjMtx: mat4 | null;
+    public texPrjMtx: mat4 | null = null;
+    public frustum: Frustum | null = null;
 }
 
 class StripeEntry {
@@ -1017,7 +1020,7 @@ export class JPAEmitterManager {
         dst[14] = posCamMtx[14];
     }
 
-    public draw(device: GfxDevice, renderInstManager: GfxRenderInstManager, drawInfo: JPADrawInfo, drawGroupId: number): void {
+    public draw(device: GfxDevice, renderInstManager: GfxRenderInstManager, drawInfo: Readonly<JPADrawInfo>, drawGroupId: number): void {
         if (this.aliveEmitters.length < 1)
             return;
 
@@ -1027,6 +1030,7 @@ export class JPAEmitterManager {
             mat4.copy(this.workData.texPrjMtx, drawInfo.texPrjMtx);
         else
             mat4.identity(this.workData.texPrjMtx);
+        this.workData.frustum = drawInfo.frustum;
 
         for (let i = 0; i < this.aliveEmitters.length; i++) {
             const emitter = this.aliveEmitters[i];
@@ -1298,7 +1302,7 @@ export class JPABaseEmitter {
         copy_rndm(this.random, this.emitterManager.workData.random);
         mat4.identity(this.globalRotation);
         vec3.set(this.globalScale, 1, 1, 1);
-        vec3.set(this.globalTranslation, 0, 0, 0);
+        vec3.zero(this.globalTranslation);
         vec2.set(this.globalScale2D, 1, 1);
         colorCopy(this.globalColorPrm, White);
         colorCopy(this.globalColorEnv, White);
@@ -1458,7 +1462,7 @@ export class JPABaseEmitter {
     }
 
     private calcVolumePoint(workData: JPAEmitterWorkData): void {
-        vec3.set(workData.volumePos, 0, 0, 0);
+        vec3.zero(workData.volumePos);
         const rndX = get_rndm_f(this.random) - 0.5;
         const rndY = get_rndm_f(this.random) - 0.5;
         const rndZ = get_rndm_f(this.random) - 0.5;
@@ -2237,7 +2241,7 @@ export class JPABaseParticle {
         this.position[1] = this.globalPosition[1] + this.localPosition[1] * workData.globalScale[1];
         this.position[2] = this.globalPosition[2] + this.localPosition[2] * workData.globalScale[2];
 
-        vec3.set(this.baseVel, 0, 0, 0);
+        vec3.zero(this.baseVel);
 
         if (baseEmitter.initialVelOmni !== 0)
             normToLengthAndAdd(this.baseVel, workData.velOmni, baseEmitter.initialVelOmni);
@@ -2279,7 +2283,7 @@ export class JPABaseParticle {
         const accel = bem1.accel * (1.0 + (get_r_zp(baseEmitter.random) * bem1.accelRndm));
         normToLength(this.accel, accel);
 
-        vec3.set(this.fieldAccel, 0, 0, 0);
+        vec3.zero(this.fieldAccel);
 
         this.drag = 1.0;
         this.airResist = Math.min(bem1.airResist + (bem1.airResistRndm * get_r_zh(baseEmitter.random)), 1);
@@ -2606,7 +2610,7 @@ export class JPABaseParticle {
 
         const dist = vec3.length(scratchVec3a);
         if (dist === 0) {
-            vec3.set(scratchVec3a, 0, 0, 0);
+            vec3.zero(scratchVec3a);
         } else {
             const scale = field.refDistanceSq / dist;
             vec3.scale(scratchVec3a, scratchVec3a, scale);
@@ -2731,7 +2735,7 @@ export class JPABaseParticle {
         if (!!(this.flags & 0x20))
             vec3.copy(this.globalPosition, workData.emitterGlobalSRT);
 
-        vec3.set(this.fieldVel, 0, 0, 0);
+        vec3.zero(this.fieldVel);
         vec3.scaleAndAdd(this.baseVel, this.baseVel, this.accel, workData.deltaTime);
 
         if (!(this.flags & 0x40))
@@ -2856,7 +2860,7 @@ export class JPABaseParticle {
                 vec3.copy(this.globalPosition, workData.emitterGlobalSRT);
 
             this.baseVel[1] -= ssp1.gravity;
-            vec3.set(this.fieldVel, 0, 0, 0);
+            vec3.zero(this.fieldVel);
 
             if (!(this.flags & 0x40))
                 this.calcField(workData);
@@ -3071,15 +3075,24 @@ export class JPABaseParticle {
             renderInst.sortKey = setSortKeyDepth(renderInst.sortKey, depth);
         }
 
-        renderInstManager.submitRenderInst(renderInst);
-
         const globalRes = workData.emitterManager.globalRes;
         const shapeType = sp1.shapeType;
 
         const packetParams = workData.packetParams;
 
+        // We model all particles below as spheres with radius 25, which should cover all bases.
+        // Stripes (and lines) are an exception, but they are handled separately.
+        if (workData.frustum !== null) {
+            const scaleX = Math.abs(this.scale[0] * workData.globalScale2D[0]);
+            const scaleY = Math.abs(this.scale[1] * workData.globalScale2D[1]);
+            const radius = 25 * Math.max(scaleX, scaleY);
+            if (!workData.frustum.containsSphere(this.position, radius))
+                return;
+        }
+
         if (shapeType === ShapeType.Billboard) {
             const rotateAngle = isRot ? this.rotateAngle : 0;
+
             transformVec3Mat4w1(scratchVec3a, workData.posCamMtx, this.position);
             computeModelMatrixSRT(packetParams.u_PosMtx[0],
                 this.scale[0] * workData.globalScale2D[0],
@@ -3239,6 +3252,8 @@ export class JPABaseParticle {
         colorMult(materialParams.u_Color[ColorKind.C1], this.colorEnv, workData.baseEmitter.globalColorEnv);
 
         fillParticleRenderInst(device, renderInstManager, workData, renderInst, materialParams, packetParams);
+
+        renderInstManager.submitRenderInst(renderInst);
     }
 
     public drawP(device: GfxDevice, renderInstManager: GfxRenderInstManager, workData: JPAEmitterWorkData, materialParams: MaterialParams): void {

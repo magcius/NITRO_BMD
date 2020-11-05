@@ -6,7 +6,7 @@ import { divideByW, ScreenSpaceProjection } from "./Camera";
 import { vec4, vec3, mat4, ReadonlyMat4, ReadonlyVec3, ReadonlyVec4 } from "gl-matrix";
 import { nArray, assert, assertExists, hexdump, magicstr } from "./util";
 import { UI, Slider } from "./ui";
-import { getMatrixTranslation, getMatrixAxisX, getMatrixAxisY, getMatrixAxisZ, MathConstants, transformVec3Mat4w0, Vec3UnitX } from "./MathHelpers";
+import { getMatrixTranslation, getMatrixAxisX, getMatrixAxisY, getMatrixAxisZ, MathConstants, transformVec3Mat4w0, Vec3UnitX, lerp } from "./MathHelpers";
 import ArrayBufferSlice from "./ArrayBufferSlice";
 import { downloadBufferSlice, downloadBuffer } from "./DownloadUtils";
 
@@ -306,6 +306,27 @@ export function drawWorldSpaceCircle(ctx: CanvasRenderingContext2D, clipFromWorl
         mat4.fromRotation(scratchMatrix, t1, axis);
         transformVec3Mat4w0(scratchVec3b, scratchMatrix, Vec3UnitX);
         vec3.scaleAndAdd(scratchVec3b, center, scratchVec3b, radius);
+
+        drawWorldSpaceLine(ctx, clipFromWorldMatrix, scratchVec3a, scratchVec3b);
+    }
+}
+
+export function drawWorldSpaceFan(ctx: CanvasRenderingContext2D, clipFromWorldMatrix: ReadonlyMat4, center: ReadonlyVec3, radius: number, front: ReadonlyVec3, angle: number, axis: ReadonlyVec3): void {
+    const nPoints = 32;
+    for (let i = 0; i < nPoints; i++) {
+        const t0 = lerp(-angle, angle, (i + 0) / (nPoints - 1));
+        mat4.fromRotation(scratchMatrix, t0, axis);
+        transformVec3Mat4w0(scratchVec3a, scratchMatrix, front);
+        vec3.scaleAndAdd(scratchVec3a, center, scratchVec3a, radius);
+        if (i === 0)
+            drawWorldSpaceLine(ctx, clipFromWorldMatrix, center, scratchVec3a);
+
+        const t1 = lerp(-angle, angle, (i + 1) / (nPoints - 1));
+        mat4.fromRotation(scratchMatrix, t1, axis);
+        transformVec3Mat4w0(scratchVec3b, scratchMatrix, front);
+        vec3.scaleAndAdd(scratchVec3b, center, scratchVec3b, radius);
+        if (i === nPoints - 1)
+            drawWorldSpaceLine(ctx, clipFromWorldMatrix, center, scratchVec3b);
 
         drawWorldSpaceLine(ctx, clipFromWorldMatrix, scratchVec3a, scratchVec3b);
     }

@@ -232,3 +232,7 @@ export function nArray<T>(n: number, c: () => T): T[] {
         d[i] = c();
     return d;
 }
+
+export function nullify<T>(v: T | undefined | null): T | null {
+    return v === undefined ? null : v;
+}

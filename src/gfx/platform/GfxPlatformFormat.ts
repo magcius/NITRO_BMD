@@ -115,6 +115,7 @@ export enum GfxFormat {
     D32F_S8         = makeFormat(FormatTypeFlags.D32S8, FormatCompFlags.COMP_RG, FormatFlags.DEPTH | FormatFlags.STENCIL),
 
     // Special RT formats for preferred backend support.
+    U8_RGB_RT       = makeFormat(FormatTypeFlags.U8,    FormatCompFlags.COMP_RGB,  FormatFlags.RT),
     U8_RGBA_RT      = makeFormat(FormatTypeFlags.U8,    FormatCompFlags.COMP_RGBA, FormatFlags.RT),
     U8_RGBA_RT_SRGB = makeFormat(FormatTypeFlags.U8,    FormatCompFlags.COMP_RGBA, FormatFlags.RT | FormatFlags.SRGB),
 }

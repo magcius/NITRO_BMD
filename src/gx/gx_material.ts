@@ -61,7 +61,7 @@ export class Light {
     }
 
     public reset(): void {
-        vec3.set(this.Position, 0, 0, 0);
+        vec3.zero(this.Position);
         vec3.set(this.Direction, 0, 0, -1);
         vec3.set(this.DistAtten, 1, 0, 0);
         vec3.set(this.CosAtten, 1, 0, 0);

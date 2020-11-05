@@ -4,7 +4,7 @@ import { mat4 } from "gl-matrix";
 import { connectToScene } from "../ActorUtil";
 import { DrawBufferType, MovementType, CalcAnimType } from "../NameObj";
 
-export class ModelObj extends LiveActor {
+export class ModelObj<T extends number = number> extends LiveActor<T> {
     constructor(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, objName: string, modelName: string, private transformMatrix: mat4 | null, drawBufferType: DrawBufferType, movementType: MovementType, calcAnimType: CalcAnimType) {
         super(zoneAndLayer, sceneObjHolder, objName);
         this.initModelManagerWithAnm(sceneObjHolder, modelName);
@@ -18,6 +18,7 @@ export class ModelObj extends LiveActor {
             drawBufferType = DrawBufferType.NoShadowedMapObj;
         connectToScene(sceneObjHolder, this, movementType, calcAnimType, drawBufferType, -1);
         this.initEffectKeeper(sceneObjHolder, null);
+        this.makeActorAppeared(sceneObjHolder);
     }
 
     protected calcAndSetBaseMtx(sceneObjHolder: SceneObjHolder): void {

@@ -29,12 +29,12 @@ import { LightDataHolder, LightDirector, LightAreaHolder } from './LightData';
 import { SceneNameObjListExecutor, DrawBufferType, createFilterKeyForDrawBufferType, OpaXlu, DrawType, createFilterKeyForDrawType, NameObjHolder, NameObj, GameBits } from './NameObj';
 import { EffectSystem } from './EffectSystem';
 
-import { AirBubbleHolder, WaterPlantDrawInit, TrapezeRopeDrawInit, SwingRopeGroup, ElectricRailHolder, PriorDrawAirHolder, CoinRotater, GalaxyNameSortTable, MiniatureGalaxyHolder, HeatHazeDirector } from './Actors/MiscActor';
+import { AirBubbleHolder, WaterPlantDrawInit, TrapezeRopeDrawInit, SwingRopeGroup, ElectricRailHolder, PriorDrawAirHolder, CoinRotater, GalaxyNameSortTable, MiniatureGalaxyHolder, HeatHazeDirector, CoinHolder } from './Actors/MiscActor';
 import { getNameObjFactoryTableEntry, PlanetMapCreator, NameObjFactoryTableEntry } from './NameObjFactory';
 import { ZoneAndLayer, LayerId, LiveActorGroupArray, getJMapInfoTrans, getJMapInfoRotate } from './LiveActor';
 import { NoclipLegacyActorSpawner } from './Actors/LegacyActor';
 import { BckCtrl } from './Animation';
-import { WaterAreaHolder, WaterAreaMgr, HazeCube, SwitchArea } from './MiscMap';
+import { WaterAreaHolder, WaterAreaMgr, HazeCube, SwitchArea, MercatorTransformCube, DeathArea } from './MiscMap';
 import { SensorHitChecker } from './HitSensor';
 import { PlanetGravityManager } from './Gravity';
 import { AreaObjMgr, AreaObj } from './AreaObj';
@@ -127,7 +127,7 @@ export class SMGRenderer implements Viewer.SceneGfx {
     private imageEffectTexture1 = new ColorTexture();
 
     private currentScenarioIndex: number = -1;
-    private scenarioSelect: UI.SingleSelect | null;
+    private scenarioSelect: UI.SingleSelect | null = null;
 
     private scenarioNoToIndex: number[] = [];
 
@@ -239,7 +239,7 @@ export class SMGRenderer implements Viewer.SceneGfx {
                 texProjCameraSceneTex(texPrjMtx, viewerInput.camera, viewerInput.viewport, 1);
             }
 
-            effectSystem.setDrawInfo(viewerInput.camera.viewMatrix, viewerInput.camera.projectionMatrix, texPrjMtx);
+            effectSystem.setDrawInfo(viewerInput.camera.viewMatrix, viewerInput.camera.projectionMatrix, texPrjMtx, viewerInput.camera.frustum);
             effectSystem.drawEmitters(this.sceneObjHolder.modelCache.device, this.renderHelper.renderInstManager, drawType);
 
             this.renderHelper.renderInstManager.popTemplateRenderInst();
@@ -790,6 +790,10 @@ export class ResourceHolder {
         return nullify(table.get(name.toLowerCase()));
     }
 
+    public isExistRes<T>(table: ResTable<T>, name: string): boolean {
+        return table.has(name.toLowerCase());
+    }
+
     private initEachResTable<T>(table: ResTable<T>, extensions: string[], constructor: (file: RARC.RARCFile, ext: string, filenameWithoutExtension: string) => T): void {
         for (let i = 0; i < this.arc.files.length; i++) {
             const file = this.arc.files[i];
@@ -960,6 +964,8 @@ class AreaObjContainer extends NameObj {
         this.managers.push(new AreaObjMgr(sceneObjHolder, 'LensFlareArea'));
         this.managers.push(new AreaObjMgr<SwitchArea>(sceneObjHolder, 'SwitchArea'));
         this.managers.push(new AreaObjMgr<HazeCube>(sceneObjHolder, 'HazeCube'));
+        this.managers.push(new AreaObjMgr<MercatorTransformCube>(sceneObjHolder, 'MercatorCube'));
+        this.managers.push(new AreaObjMgr<DeathArea>(sceneObjHolder, 'DeathArea'));
     }
 
     public getManager(managerName: string): AreaObjMgr<AreaObj> {
@@ -1129,6 +1135,7 @@ export class SceneObjHolder {
     public furDrawManager: FurDrawManager | null = null;
     public namePosHolder: NamePosHolder | null = null;
     public planetGravityManager: PlanetGravityManager | null = null;
+    public coinHolder: CoinHolder | null = null;
     public coinRotater: CoinRotater | null = null;
     public airBubbleHolder: AirBubbleHolder | null = null;
     public starPieceDirector: StarPieceDirector | null = null;
@@ -1195,6 +1202,8 @@ export class SceneObjHolder {
             return this.namePosHolder;
         else if (sceneObj === SceneObj.PlanetGravityManager)
             return this.planetGravityManager;
+        else if (sceneObj === SceneObj.CoinHolder)
+            return this.coinHolder;
         else if (sceneObj === SceneObj.CoinRotater)
             return this.coinRotater;
         else if (sceneObj === SceneObj.AirBubbleHolder)
@@ -1257,6 +1266,8 @@ export class SceneObjHolder {
             this.namePosHolder = new NamePosHolder(this);
         else if (sceneObj === SceneObj.PlanetGravityManager)
             this.planetGravityManager = new PlanetGravityManager(this);
+        else if (sceneObj === SceneObj.CoinHolder)
+            this.coinHolder = new CoinHolder(this);
         else if (sceneObj === SceneObj.CoinRotater)
             this.coinRotater = new CoinRotater(this);
         else if (sceneObj === SceneObj.AirBubbleHolder)
@@ -1289,6 +1300,8 @@ export class SceneObjHolder {
 
     public requestArchives(): void {
         ShadowControllerHolder.requestArchives(this);
+        StarPieceDirector.requestArchives(this);
+        CoinHolder.requestArchives(this);
     }
 
     public destroy(device: GfxDevice): void {
@@ -1768,7 +1781,6 @@ export abstract class SMGSceneDescBase implements Viewer.SceneDesc {
         modelCache.requestArchiveData(`UsEnglish/MessageData/Message.arc`);
         modelCache.requestObjectData('PlanetMapDataTable');
         modelCache.requestObjectData('NPCData');
-        modelCache.requestObjectData('StarPiece');
 
         const sceneObjHolder = new SceneObjHolder();
         sceneObjHolder.sceneDesc = this;

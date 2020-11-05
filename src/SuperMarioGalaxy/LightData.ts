@@ -83,7 +83,7 @@ class ActorLightInfo {
         this.Light1.setLight(mp.u_Lights[1], camera);
 
         const light2 = mp.u_Lights[2];
-        vec3.set(light2.Position, 0, 0, 0);
+        vec3.zero(light2.Position);
         vec3.set(light2.Direction, 0, -1, 0);
         vec3.set(light2.CosAtten, 1, 0, 0);
         vec3.set(light2.DistAtten, 1, 0, 0);
@@ -98,7 +98,7 @@ class ActorLightInfo {
         this.Light1.setLight(modelInstance.getGXLightReference(1), camera);
 
         const light2 = modelInstance.getGXLightReference(2);
-        vec3.set(light2.Position, 0, 0, 0);
+        vec3.zero(light2.Position);
         vec3.set(light2.Direction, 0, -1, 0);
         vec3.set(light2.CosAtten, 1, 0, 0);
         vec3.set(light2.DistAtten, 1, 0, 0);
@@ -452,7 +452,7 @@ export class LightArea extends AreaObj {
 }
 
 export function createLightCtrlCube(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): NameObj {
-    return new LightArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.CubeGround);
+    return new LightArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.OriginCube);
 }
 
 export function createLightCtrlCylinder(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): NameObj {
