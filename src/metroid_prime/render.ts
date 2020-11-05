@@ -764,6 +764,7 @@ export class CMDLRenderer {
     public modelMatrix: mat4 = mat4.create();
     private animTreeNode?: AnimTreeNode;
     private poseBuilder?: HierarchyPoseBuilder;
+    private pose?: PoseAsTransforms;
     private envelopeMats?: mat4[];
 
     constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData, public animationData?: AnimationData) {
@@ -814,15 +815,17 @@ export class CMDLRenderer {
             return;
 
         if (this.animationData && this.poseBuilder) {
-            if (!this.animTreeNode)
+            if (!this.animTreeNode) {
                 this.animTreeNode = this.animationData.metaAnim.GetAnimationTree(this.animationData.animSysContext);
+                this.pose = new PoseAsTransforms();
+            }
 
             this.animTreeNode.AdvanceView(new CharAnimTime(viewerInput.deltaTime / 1000));
             const simp = this.animTreeNode.Simplified();
             if (simp)
                 this.animTreeNode = simp as AnimTreeNode;
 
-            const pose = this.poseBuilder.BuildFromAnimRoot(this.animTreeNode);
+            this.poseBuilder.BuildFromAnimRoot(this.animTreeNode, this.pose!);
 
             const skinRules = this.animationData.cskr.skinRules;
             for (let i = 0; i < skinRules.length; ++i) {
@@ -830,7 +833,7 @@ export class CMDLRenderer {
                 const envMat = this.envelopeMats![i];
                 envMat.fill(0);
                 for (const weight of skinRule.weights) {
-                    const mat = pose.get(weight.boneId) as mat4;
+                    const mat = this.pose!.get(weight.boneId) as mat4;
                     mat4.multiplyScalarAndAdd(envMat, envMat, mat, weight.weight);
                 }
             }

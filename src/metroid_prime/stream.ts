@@ -1,5 +1,6 @@
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { readString, assert, align } from "../util";
+import { quat, vec3 } from "gl-matrix";
 
 export class InputStream {
     private view!: DataView;
@@ -45,5 +46,20 @@ export class InputStream {
     public readAssetID(): string {
         assert(this.assetIDLength !== 0, "Asset ID length has not been set");
         return this.readString(this.assetIDLength, false);
+    }
+
+    public readVec3(v: vec3): vec3 {
+        v[0] = this.readFloat32();
+        v[1] = this.readFloat32();
+        v[2] = this.readFloat32();
+        return v;
+    }
+
+    public readQuat(q: quat): quat {
+        q[1] = this.readFloat32();
+        q[2] = this.readFloat32();
+        q[3] = this.readFloat32();
+        q[0] = this.readFloat32();
+        return q;
     }
 }

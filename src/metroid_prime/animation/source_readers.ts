@@ -74,15 +74,17 @@ export class AnimSourceReader extends AnimSourceReaderBase {
             const rootId = this.source.rootBone;
             let rb = undefined;
             if (this.source.HasRotation(rootId)) {
-                const ra = quat.conjugate(quat.create(), this.source.GetRotation(rootId, prevTime));
-                rb = quat.conjugate(quat.create(), this.source.GetRotation(rootId, this.curTime));
+                const ra = this.source.GetRotation(rootId, prevTime);
+                quat.conjugate(ra, ra);
+                rb = this.source.GetRotation(rootId, this.curTime);
+                quat.conjugate(rb, rb);
                 quat.multiply(results.deltas.rotationDelta, rb, ra);
             }
 
             if (this.source.HasTranslation(rootId)) {
                 const ta = this.source.GetTranslation(rootId, prevTime);
                 const tb = this.source.GetTranslation(rootId, this.curTime);
-                const tdelta = vec3.sub(vec3.create(), tb, ta);
+                const tdelta = vec3.sub(/*recycle*/tb, tb, ta);
                 if (rb)
                     vec3.transformQuat(results.deltas.translationDelta, tdelta, rb);
                 else
@@ -503,10 +505,10 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
 
             results.remTime = overTime;
             if (this.HasRotation(rootId))
-                quat.mul(results.deltas.rotationDelta, nextQ, quat.conjugate(quat.create(), priorQ));
+                quat.mul(results.deltas.rotationDelta, nextQ, quat.conjugate(/*recycle*/priorQ, priorQ));
             if (this.HasTranslation(rootId))
                 vec3.transformQuat(results.deltas.translationDelta,
-                    vec3.sub(vec3.create(), nextV, priorV), quat.conjugate(quat.create(), nextQ));
+                    vec3.sub(/*recycle*/nextV, nextV, priorV), quat.conjugate(/*recycle*/nextQ, nextQ));
             if (this.HasScale(rootId))
                 vec3.sub(results.deltas.scaleDelta, nextS, priorS);
 

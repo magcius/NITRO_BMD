@@ -605,11 +605,11 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
             let ret = new Array(indices.length);
             for (let i = 0; i < indices.length; ++i) {
                 const rotation = setA[i].rotation && setB[i].rotation ?
-                    quat.slerp(quat.create(), setA[i].rotation as quat, setB[i].rotation as quat, w) : undefined;
+                    quat.slerp(/*recycle*/setA[i].rotation!, setA[i].rotation!, setB[i].rotation!, w) : undefined;
                 const translation = setA[i].translation && setB[i].translation ?
-                    vec3.lerp(vec3.create(), setA[i].translation as vec3, setB[i].translation as vec3, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].translation!, setA[i].translation!, setB[i].translation!, w) : undefined;
                 const scale = setA[i].scale && setB[i].scale ?
-                    vec3.lerp(vec3.create(), setA[i].scale as vec3, setB[i].scale as vec3, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].scale!, setA[i].scale!, setB[i].scale!, w) : undefined;
                 ret[i] = new PerSegmentData(rotation, translation, scale);
             }
             return ret;
@@ -676,10 +676,10 @@ export class AnimTreeBlend extends AnimTreeTweenBase {
         const ssB = this.right.GetSteadyStateAnimInfo();
         const resOffset = vec3.create();
         if (ssA.duration.Less(ssB.duration)) {
-            vec3.scaleAndAdd(resOffset, vec3.scale(vec3.create(), ssB.offset, 1.0 - this.blendWeight),
+            vec3.scaleAndAdd(resOffset, vec3.scale(resOffset, ssB.offset, 1.0 - this.blendWeight),
                 ssA.offset, ssB.duration.Div(ssA.duration) * this.blendWeight);
         } else if (ssB.duration < ssA.duration) {
-            vec3.scaleAndAdd(resOffset, vec3.scale(vec3.create(), ssB.offset,
+            vec3.scaleAndAdd(resOffset, vec3.scale(resOffset, ssB.offset,
                 ssA.duration.Div(ssB.duration) * (1.0 - this.blendWeight)), ssA.offset, this.blendWeight);
         } else {
             vec3.add(resOffset, ssA.offset, ssB.offset);

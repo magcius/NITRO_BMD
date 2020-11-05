@@ -2,86 +2,33 @@ import { InputStream } from "../stream";
 import { ResourceSystem } from "../resource";
 import { CharAnimTime } from "./char_anim_time";
 import { EVNT } from "../evnt";
-import { quat, vec3 } from "gl-matrix";
+import { quat, ReadonlyQuat, ReadonlyVec3, vec3 } from "gl-matrix";
 import { compareEpsilon, saturate } from "../../MathHelpers";
 import { PerSegmentData } from "./base_reader";
+import { nArray } from "../../util";
 
 class KeyStorage {
-    keyData: Float32Array;
-    frameCount: number;
-    scaleKeyCount: number;
-    rotationKeyCount: number;
-    translationKeyCount: number;
+    scaleKeys: ReadonlyVec3[];
+    rotationKeys: ReadonlyQuat[];
+    translationKeys: ReadonlyVec3[];
 
-    constructor(stream: InputStream, frameCount: number, mp2: boolean) {
-        let scaleKeyCount = 0;
-        let rotationKeyCount = 0;
-        let translationKeyCount = 0;
-
-        function countElements(): number {
-            let elementCount = 0;
-            const rewindPoint = stream.tell();
-            if (mp2) {
-                scaleKeyCount = stream.readUint32();
-                elementCount += scaleKeyCount * 3;
-                stream.skip(scaleKeyCount * 12);
-            }
-            rotationKeyCount = stream.readUint32();
-            elementCount += rotationKeyCount * 4;
-            stream.skip(rotationKeyCount * 16);
-            translationKeyCount = stream.readUint32();
-            elementCount += translationKeyCount * 3;
-            stream.goTo(rewindPoint);
-            return elementCount;
-        }
-
-        this.keyData = new Float32Array(countElements());
-
-        const keyData = this.keyData;
-        let elementItr = 0;
-
-        function readFloat3(count: number) {
-            for (let i = 0; i < count; ++i) {
-                keyData[elementItr++] = stream.readFloat32();
-                keyData[elementItr++] = stream.readFloat32();
-                keyData[elementItr++] = stream.readFloat32();
-            }
-        }
-
-        function readFloat4(count: number) {
-            for (let i = 0; i < count; ++i) {
-                keyData[elementItr++] = stream.readFloat32();
-                keyData[elementItr++] = stream.readFloat32();
-                keyData[elementItr++] = stream.readFloat32();
-                keyData[elementItr++] = stream.readFloat32();
-            }
-        }
-
+    constructor(stream: InputStream, private frameCount: number, mp2: boolean) {
         if (mp2)
-            readFloat3(stream.readUint32());
-        readFloat4(stream.readUint32());
-        readFloat3(stream.readUint32());
-
-        this.frameCount = frameCount;
-        this.scaleKeyCount = scaleKeyCount;
-        this.rotationKeyCount = rotationKeyCount;
-        this.translationKeyCount = translationKeyCount;
+            this.scaleKeys = nArray(stream.readUint32(), () => stream.readVec3(vec3.create()));
+        this.rotationKeys = nArray(stream.readUint32(), () => stream.readQuat(quat.create()));
+        this.translationKeys = nArray(stream.readUint32(), () => stream.readVec3(vec3.create()));
     }
 
-    GetScale(frameIdx: number, scaleIdx: number): vec3 {
-        const offset = (this.frameCount * scaleIdx + frameIdx) * 3;
-        return vec3.fromValues(this.keyData[offset], this.keyData[offset + 1], this.keyData[offset + 2]);
+    GetScale(frameIdx: number, scaleIdx: number): ReadonlyVec3 {
+        return this.scaleKeys[this.frameCount * scaleIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 
-    GetRotation(frameIdx: number, rotIdx: number): quat {
-        const offset = this.scaleKeyCount * 3 + (this.frameCount * rotIdx + frameIdx) * 4;
-        return quat.fromValues(this.keyData[offset + 1], this.keyData[offset + 2],
-            this.keyData[offset + 3], this.keyData[offset]);
+    GetRotation(frameIdx: number, rotIdx: number): ReadonlyQuat {
+        return this.rotationKeys[this.frameCount * rotIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 
-    GetTranslation(frameIdx: number, transIdx: number): vec3 {
-        const offset = this.scaleKeyCount * 3 + this.rotationKeyCount * 4 + (this.frameCount * transIdx + frameIdx) * 3;
-        return vec3.fromValues(this.keyData[offset], this.keyData[offset + 1], this.keyData[offset + 2]);
+    GetTranslation(frameIdx: number, transIdx: number): ReadonlyVec3 {
+        return this.translationKeys[this.frameCount * transIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 }
 
@@ -239,7 +186,7 @@ class BoneAttributeDescriptor {
     initialZ: number = 0;
     bitsZ: number = 0;
 
-    constructor(stream?: InputStream, mp2?: boolean) {
+    constructor(stream?: InputStream) {
         this.keyCount = stream ? stream.readUint16() : 0;
         if (stream && this.keyCount) {
             this.initialX = stream.readInt16();
@@ -264,9 +211,9 @@ class BoneChannelDescriptor {
 
     constructor(stream: InputStream, mp2: boolean) {
         this.boneId = mp2 ? stream.readUint8() : stream.readUint32();
-        this.rotation = new BoneAttributeDescriptor(stream, mp2);
-        this.translation = new BoneAttributeDescriptor(stream, mp2);
-        this.scale = mp2 ? new BoneAttributeDescriptor(stream, mp2) : new BoneAttributeDescriptor();
+        this.rotation = new BoneAttributeDescriptor(stream);
+        this.translation = new BoneAttributeDescriptor(stream);
+        this.scale = mp2 ? new BoneAttributeDescriptor(stream) : new BoneAttributeDescriptor();
     }
 
     TotalBits(): number {

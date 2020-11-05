@@ -1,31 +1,21 @@
 import { InputStream } from "./stream";
 import { ResourceGame, ResourceSystem } from "./resource";
-import { quat, vec3 } from "gl-matrix";
+import { quat, ReadonlyQuat, ReadonlyVec3, vec3 } from "gl-matrix";
 
 export class Bone {
     parentBoneId: number;
-    origin: vec3;
-    rotation?: quat;
-    localRotation?: quat;
+    origin: ReadonlyVec3;
+    rotation?: ReadonlyQuat;
+    localRotation?: ReadonlyQuat;
     children: number[];
+    originFromParent: ReadonlyVec3;
 
     constructor(stream: InputStream, mp2: boolean) {
         this.parentBoneId = stream.readUint32();
-        this.origin = vec3.create();
-        this.origin[0] = stream.readFloat32();
-        this.origin[1] = stream.readFloat32();
-        this.origin[2] = stream.readFloat32();
+        this.origin = stream.readVec3(vec3.create());
         if (mp2) {
-            this.rotation = quat.create();
-            this.rotation[1] = stream.readFloat32();
-            this.rotation[2] = stream.readFloat32();
-            this.rotation[3] = stream.readFloat32();
-            this.rotation[0] = stream.readFloat32();
-            this.localRotation = quat.create();
-            this.localRotation[1] = stream.readFloat32();
-            this.localRotation[2] = stream.readFloat32();
-            this.localRotation[3] = stream.readFloat32();
-            this.localRotation[0] = stream.readFloat32();
+            this.rotation = stream.readQuat(quat.create());
+            this.localRotation = stream.readQuat(quat.create());
         }
         const childCount = stream.readUint32();
         this.children = new Array(childCount);
@@ -71,21 +61,24 @@ export class CINF {
             const boneId = stream.readUint32();
             this.boneNames.set(name, boneId);
         }
-    }
 
-    getFromParentUnrotated(boneId: number): vec3 {
-        const bone = this.bones.get(boneId);
-        if (this.bones.has(bone!.parentBoneId)) {
-            const parent = this.bones.get(bone!.parentBoneId);
-            return vec3.sub(vec3.create(), bone!.origin, parent!.origin);
-        } else {
-            return bone!.origin;
+        // Precompute offset from parent
+        for (const [boneId, bone] of this.bones) {
+            if (this.bones.has(bone!.parentBoneId)) {
+                const parent = this.bones.get(bone!.parentBoneId);
+                bone.originFromParent = vec3.sub(vec3.create(), bone!.origin, parent!.origin);
+            } else {
+                bone.originFromParent = bone!.origin;
+            }
         }
     }
 
-    getFromRootUnrotated(boneId: number): vec3 {
-        const bone = this.bones.get(boneId);
-        return bone!.origin;
+    getFromParentUnrotated(boneId: number): ReadonlyVec3 {
+        return this.bones.get(boneId)!.originFromParent;
+    }
+
+    getFromRootUnrotated(boneId: number): ReadonlyVec3 {
+        return this.bones.get(boneId)!.origin;
     }
 }
 

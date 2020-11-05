@@ -1,5 +1,5 @@
 import { CharAnimTime } from "./char_anim_time";
-import { quat, vec3 } from "gl-matrix";
+import { quat, ReadonlyQuat, ReadonlyVec3, vec3 } from "gl-matrix";
 
 export class AdvancementDeltas {
     constructor(public translationDelta: vec3 = vec3.create(),
@@ -41,7 +41,7 @@ export class PerSegmentData {
 
 export class SteadyStateAnimInfo {
     constructor(public duration: CharAnimTime,
-                public offset: vec3,
+                public offset: ReadonlyVec3,
                 public looping: boolean) {
     }
 }
