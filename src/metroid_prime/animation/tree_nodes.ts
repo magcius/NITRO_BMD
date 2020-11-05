@@ -43,7 +43,7 @@ function GetTransitionTree(a: AnimTreeNode, b: AnimTreeNode, context: AnimSysCon
  * Composite information of two or more animation resources
  */
 class SequenceFundamentals {
-    // TODO: EVNT nodes
+    // TODO(Cirrus): EVNT nodes
     constructor(public steadyStateInfo: SteadyStateAnimInfo) {
     }
 
@@ -54,7 +54,7 @@ class SequenceFundamentals {
         if (nodes.length > 0) {
             let node: AnimTreeNode = nodes[0].Clone() as AnimTreeNode;
             for (let i = 0; i < nodes.length; ++i) {
-                // TODO: EVNT nodes
+                // TODO(Cirrus): EVNT nodes
 
                 duration = duration.Add(node.GetTimeRemaining());
 
@@ -716,7 +716,7 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
     static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, transDur: CharAnimTime, runLeft: boolean,
                   interpolateAdvancement: boolean, name: string): AnimTreeTransition {
         return new AnimTreeTransition(outgoing, incoming, transDur, new CharAnimTime(), runLeft,
-            false /* TODO: Use Loop POI */, interpolateAdvancement, name);
+            false /* TODO(Cirrus): Use Loop POI */, interpolateAdvancement, name);
     }
 
     private AdvanceViewForTransitionalPeriod(dt: CharAnimTime): AdvancementResults {

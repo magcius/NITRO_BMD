@@ -15,7 +15,7 @@ export abstract class AnimSourceReaderBase extends IAnimReader {
         super();
     }
 
-    // TODO: EVNT data reference
+    // TODO(Cirrus): EVNT data reference
 
     GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         return this.steadyStateInfo;

@@ -120,6 +120,7 @@ const modelViewMatrixScratch = mat4.create();
 const bboxScratch = new AABB();
 const envelopeModelMatrixScratch = nArray(10, () => mat4.create());
 const envelopeModelMatricesNulledScratch: (mat4|null)[] = new Array(10).fill(null);
+const defaultUVAnimationModelMatrixScratch = mat4.create();
 
 class SurfaceData {
     public shapeHelper: GXShapeHelperGfx;
@@ -179,6 +180,7 @@ class SurfaceInstance {
             const packet = loadedVertexData.draws[p];
 
             let envelopeModelMatrices: (mat4|null)[] | undefined = undefined;
+            let defaultUVAnimationModelMatrix = this.modelMatrix;
             if (envelopeMats) {
                 for (let j = 0; j < packet.posNrmMatrixTable.length; j++) {
                     const posNrmMatrixIdx = packet.posNrmMatrixTable[j];
@@ -188,6 +190,14 @@ class SurfaceInstance {
                         continue;
 
                     mat4.mul(this.packetParams.u_PosMtx[j], modelViewMatrixScratch, envelopeMats[posNrmMatrixIdx]);
+
+                    // First available position matrix serves as the fallback model matrix for UV animations.
+                    // This gets some decent environment mapping on MP2 skinned models, but no idea if this is
+                    // what the game does in practice (Cirrus).
+                    if (defaultUVAnimationModelMatrix === this.modelMatrix) {
+                        mat4.mul(defaultUVAnimationModelMatrixScratch, modelMatrixScratch, envelopeMats[posNrmMatrixIdx]);
+                        defaultUVAnimationModelMatrix = defaultUVAnimationModelMatrixScratch;
+                    }
                 }
 
                 envelopeModelMatrices = envelopeModelMatricesNulledScratch;
@@ -208,7 +218,7 @@ class SurfaceInstance {
             }
 
             const renderInst = renderHelper.renderInstManager.newRenderInst();
-            this.materialGroupInstance.prepareToRender(renderHelper.renderInstManager, viewerInput, this.modelMatrix, isSkybox, actorLights, OpaqueBlack, envelopeModelMatrices);
+            this.materialGroupInstance.prepareToRender(renderHelper.renderInstManager, viewerInput, defaultUVAnimationModelMatrix, isSkybox, actorLights, OpaqueBlack, envelopeModelMatrices);
             this.materialGroupInstance.setOnRenderInst(device, renderHelper.renderInstManager.gfxRenderCache, renderInst);
             this.surfaceData.shapeHelper.setOnRenderInst(renderInst, packet);
             this.materialGroupInstance.materialHelper.allocatePacketParamsDataOnInst(renderInst, this.packetParams);
