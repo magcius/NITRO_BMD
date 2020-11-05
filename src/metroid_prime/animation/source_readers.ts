@@ -71,16 +71,17 @@ export class AnimSourceReader extends AnimSourceReaderBase {
 
             let results = new AdvancementResults(remTime);
 
+            const rootId = this.source.rootBone;
             let rb = undefined;
-            if (this.source.HasRotation(3)) {
-                const ra = quat.conjugate(quat.create(), this.source.GetRotation(3, prevTime));
-                rb = quat.conjugate(quat.create(), this.source.GetRotation(3, this.curTime));
+            if (this.source.HasRotation(rootId)) {
+                const ra = quat.conjugate(quat.create(), this.source.GetRotation(rootId, prevTime));
+                rb = quat.conjugate(quat.create(), this.source.GetRotation(rootId, this.curTime));
                 quat.multiply(results.deltas.rotationDelta, rb, ra);
             }
 
-            if (this.source.HasTranslation(3)) {
-                const ta = this.source.GetTranslation(3, prevTime);
-                const tb = this.source.GetTranslation(3, this.curTime);
+            if (this.source.HasTranslation(rootId)) {
+                const ta = this.source.GetTranslation(rootId, prevTime);
+                const tb = this.source.GetTranslation(rootId, this.curTime);
                 const tdelta = vec3.sub(vec3.create(), tb, ta);
                 if (rb)
                     vec3.transformQuat(results.deltas.translationDelta, tdelta, rb);
@@ -88,9 +89,9 @@ export class AnimSourceReader extends AnimSourceReaderBase {
                     results.deltas.translationDelta = tdelta;
             }
 
-            if (this.source.HasScale(3)) {
-                const sa = this.source.GetScale(3, prevTime);
-                const sb = this.source.GetScale(3, this.curTime);
+            if (this.source.HasScale(rootId)) {
+                const sa = this.source.GetScale(rootId, prevTime);
+                const sb = this.source.GetScale(rootId, this.curTime);
                 vec3.sub(results.deltas.scaleDelta, sb, sa);
             }
 
@@ -480,10 +481,11 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
             return {remTime: new CharAnimTime(), deltas: new AdvancementDeltas()};
         } else {
             let results = new AdvancementResults();
+            const rootId = this.source.rootBone;
 
-            const priorQ = this.GetRotation(3);
-            const priorV = this.GetTranslation(3);
-            const priorS = this.GetScale(3);
+            const priorQ = this.GetRotation(rootId);
+            const priorV = this.GetTranslation(rootId);
+            const priorS = this.GetScale(rootId);
 
             this.curTime = this.curTime.Add(dt);
             let overTime = new CharAnimTime();
@@ -495,17 +497,17 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
             this.totals.SetTime(this.bitLoader, this.curTime);
             this.UpdatePOIStates();
 
-            const nextQ = this.GetRotation(3);
-            const nextV = this.GetTranslation(3);
-            const nextS = this.GetScale(3);
+            const nextQ = this.GetRotation(rootId);
+            const nextV = this.GetTranslation(rootId);
+            const nextS = this.GetScale(rootId);
 
             results.remTime = overTime;
-            if (this.HasRotation(3))
+            if (this.HasRotation(rootId))
                 quat.mul(results.deltas.rotationDelta, nextQ, quat.conjugate(quat.create(), priorQ));
-            if (this.HasTranslation(3))
+            if (this.HasTranslation(rootId))
                 vec3.transformQuat(results.deltas.translationDelta,
                     vec3.sub(vec3.create(), nextV, priorV), quat.conjugate(quat.create(), nextQ));
-            if (this.HasScale(3))
+            if (this.HasScale(rootId))
                 vec3.sub(results.deltas.scaleDelta, nextS, priorS);
 
             return results;

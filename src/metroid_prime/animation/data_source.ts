@@ -263,7 +263,7 @@ class BoneChannelDescriptor {
     scale: BoneAttributeDescriptor;
 
     constructor(stream: InputStream, mp2: boolean) {
-        this.boneId = stream.readUint32();
+        this.boneId = mp2 ? stream.readUint8() : stream.readUint32();
         this.rotation = new BoneAttributeDescriptor(stream, mp2);
         this.translation = new BoneAttributeDescriptor(stream, mp2);
         this.scale = mp2 ? new BoneAttributeDescriptor(stream, mp2) : new BoneAttributeDescriptor();
@@ -301,8 +301,10 @@ export class AnimSourceCompressed {
 
     constructor(stream: InputStream, resourceSystem: ResourceSystem, mp2: boolean) {
         stream.skip(4);
-        const evntID = stream.readAssetID();
-        this.evntData = resourceSystem.loadAssetByID<EVNT>(evntID, "EVNT");
+        if (!mp2) {
+            const evntID = stream.readAssetID();
+            this.evntData = resourceSystem.loadAssetByID<EVNT>(evntID, "EVNT");
+        }
         stream.skip(mp2 ? 2 : 4);
         this.duration = stream.readFloat32();
         this.interval = stream.readFloat32();

@@ -1,18 +1,32 @@
 import { InputStream } from "./stream";
-import { ResourceSystem } from "./resource";
-import { vec3 } from "gl-matrix";
+import { ResourceGame, ResourceSystem } from "./resource";
+import { quat, vec3 } from "gl-matrix";
 
 export class Bone {
     parentBoneId: number;
     origin: vec3;
+    rotation?: quat;
+    localRotation?: quat;
     children: number[];
 
-    constructor(stream: InputStream) {
+    constructor(stream: InputStream, mp2: boolean) {
         this.parentBoneId = stream.readUint32();
-        const x = stream.readFloat32();
-        const y = stream.readFloat32();
-        const z = stream.readFloat32();
-        this.origin = vec3.fromValues(x, y, z);
+        this.origin = vec3.create();
+        this.origin[0] = stream.readFloat32();
+        this.origin[1] = stream.readFloat32();
+        this.origin[2] = stream.readFloat32();
+        if (mp2) {
+            this.rotation = quat.create();
+            this.rotation[1] = stream.readFloat32();
+            this.rotation[2] = stream.readFloat32();
+            this.rotation[3] = stream.readFloat32();
+            this.rotation[0] = stream.readFloat32();
+            this.localRotation = quat.create();
+            this.localRotation[1] = stream.readFloat32();
+            this.localRotation[2] = stream.readFloat32();
+            this.localRotation[3] = stream.readFloat32();
+            this.localRotation[0] = stream.readFloat32();
+        }
         const childCount = stream.readUint32();
         this.children = new Array(childCount);
         for (let i = 0; i < childCount; ++i) {
@@ -25,13 +39,23 @@ export class CINF {
     bones: Map<number, Bone>;
     buildOrder: number[];
     boneNames: Map<string, number>;
+    rootId: number;
+    nullId: number;
 
-    constructor(stream: InputStream) {
+    constructor(stream: InputStream, mp2: boolean) {
+        if (mp2) {
+            this.rootId = 0;
+            this.nullId = 97;
+        } else {
+            this.rootId = 3;
+            this.nullId = 2;
+        }
+
         const boneCount = stream.readUint32();
         this.bones = new Map<number, Bone>();
         for (let i = 0; i < boneCount; ++i) {
             const boneId = stream.readUint32();
-            this.bones.set(boneId, new Bone(stream));
+            this.bones.set(boneId, new Bone(stream, mp2));
         }
 
         const buildOrderCount = stream.readUint32();
@@ -66,5 +90,5 @@ export class CINF {
 }
 
 export function parse(stream: InputStream, resourceSystem: ResourceSystem): CINF {
-    return new CINF(stream);
+    return new CINF(stream, resourceSystem.game === ResourceGame.MP2);
 }

@@ -19,14 +19,14 @@ export class HierarchyPoseBuilder {
 
     constructor(private cinf: CINF) {
         for (const boneId of cinf.buildOrder) {
-            this.BuildIntoHierarchy(boneId, 2);
+            this.BuildIntoHierarchy(boneId);
         }
     }
 
-    private BuildIntoHierarchy(boneId: number, nullId: number) {
+    private BuildIntoHierarchy(boneId: number) {
         if (!this.treeMap.has(boneId)) {
             const bone = this.cinf.bones.get(boneId);
-            if (bone!.parentBoneId === nullId) {
+            if (bone!.parentBoneId === this.cinf.nullId) {
                 this.rootId = boneId;
                 const origin = this.cinf.getFromParentUnrotated(boneId);
                 this.treeMap.set(boneId, {
@@ -37,7 +37,7 @@ export class HierarchyPoseBuilder {
                     scale: vec3.fromValues(1.0, 1.0, 1.0)
                 });
             } else {
-                this.BuildIntoHierarchy(bone!.parentBoneId, nullId);
+                this.BuildIntoHierarchy(bone!.parentBoneId);
                 const origin = this.cinf.getFromParentUnrotated(boneId);
                 const parentNode = this.treeMap.get(bone!.parentBoneId);
                 this.treeMap.set(boneId,
@@ -63,7 +63,7 @@ export class HierarchyPoseBuilder {
         const offsetFromRoot = vec3.transformMat3(vec3.create(), node.offset, parentXf);
         vec3.add(offsetFromRoot, offsetFromRoot, parentOffset);
 
-        const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== 3 ? bindOffset : vec3.create()));
+        const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== this.cinf.rootId ? bindOffset : vec3.create()));
         const xf = mat4_ext.fromMat3AndTranslate(mat4.create(), rotationFromRootMat, offsetFromRoot);
         mat4.mul(xf, xf, inverseBind);
 
@@ -87,7 +87,7 @@ export class HierarchyPoseBuilder {
         const offsetFromRoot = vec3.transformMat3(vec3.create(), node.offset, parentXf);
         vec3.add(offsetFromRoot, offsetFromRoot, parentOffset);
 
-        const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== 3 ? bindOffset : vec3.create()));
+        const inverseBind = mat4.fromTranslation(mat4.create(), vec3.negate(vec3.create(), boneId !== this.cinf.rootId ? bindOffset : vec3.create()));
         const xf = mat4_ext.fromMat3AndTranslate(mat4.create(), rotationScale, offsetFromRoot);
         mat4.mul(xf, xf, inverseBind);
 
@@ -115,7 +115,7 @@ export class HierarchyPoseBuilder {
 
         for (let i = 0; i < this.cinf.buildOrder.length; ++i) {
             const boneId = this.cinf.buildOrder[i];
-            if (boneId == 3)
+            if (boneId == this.cinf.rootId)
                 continue;
             const node = this.treeMap.get(boneId);
             const {rotation, scale, translation} = data[i];

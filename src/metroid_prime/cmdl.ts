@@ -114,15 +114,14 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem, asset
     const hasPosShort = (!!(flags & Flags.POS_SHORT));
     const hasUVShort = (!!(flags & Flags.UV_SHORT) || version === ModelVersion.DKCR);
 
-    // If loaded via ANCS, MP1 CSKRs are also loaded to generate PNMTXIDX envelopes during geometry parsing
+    // If loaded via ANCS, MP1 CSKRs are also loaded to generate PNMTXIDX envelopes during geometry parsing.
+    // MP2 and MP3 CSKRs are loaded because they contain pre-generated PNMTXIDX envelopes.
     let cskr: CSKR | undefined;
-    if (version === ModelVersion.MP1) {
-        const cskrId = resourceSystem.getModelSkin(assetID);
-        if (cskrId) {
-            const cskrObj = resourceSystem.loadAssetByID<CSKR>(cskrId, "CSKR");
-            if (cskrObj)
-                cskr = cskrObj
-        }
+    const cskrId = resourceSystem.getModelSkin(assetID);
+    if (cskrId) {
+        const cskrObj = resourceSystem.loadAssetByID<CSKR>(cskrId, "CSKR");
+        if (cskrObj)
+            cskr = cskrObj
     }
 
     let geometry;

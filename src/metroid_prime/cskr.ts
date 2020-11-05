@@ -1,5 +1,5 @@
 import { InputStream } from "./stream";
-import { ResourceSystem } from "./resource";
+import { ResourceGame, ResourceSystem } from "./resource";
 
 export interface SkinWeight {
     boneId: number;
@@ -12,7 +12,7 @@ export interface SkinRule {
 }
 
 export class CSKR {
-    constructor(public skinRules: SkinRule[]) {
+    constructor(public skinRules: SkinRule[], public envelopeSets?: number[]) {
     }
 
     vertexIndexToSkinIndex(vertIndex: number): number {
@@ -41,5 +41,18 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem): CSKR
         const vertexCount = stream.readUint32();
         skinRules[i] = {weights: weights, vertexCount: vertexCount};
     }
-    return new CSKR(skinRules);
+
+    switch (resourceSystem.game) {
+        case ResourceGame.MP1:
+            return new CSKR(skinRules);
+        case ResourceGame.MP2:
+            const envelopeSkinIndexCount = stream.readUint32();
+            const envelopeSets: number[] = new Array(envelopeSkinIndexCount);
+            for (let i = 0; i < envelopeSkinIndexCount; ++i) {
+                envelopeSets[i] = stream.readUint16();
+            }
+            return new CSKR(skinRules, envelopeSets);
+    }
+
+    throw "Unhandled game CSKR";
 }
