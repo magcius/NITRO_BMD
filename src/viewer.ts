@@ -217,14 +217,13 @@ export class Viewer {
         this.viewerRenderInput.time = this.sceneTime;
         this.viewerRenderInput.backbufferWidth = fbw;
         this.viewerRenderInput.backbufferHeight = fbh;
-        this.gfxSwapChain.configureSwapChain(fbw, fbh, framebuffer);
+        this.gfxSwapChain.configureSwapChain_legacy(fbw, fbh);
+        this.viewerRenderInput.onscreenTexture = this.gfxSwapChain.getOnscreenTexture();
 
         this.renderStatisticsTracker.beginFrame();
 
         resetGfxDebugGroup(this.debugGroup);
-        this.gfxDevice.pushDebugGroup(this.debugGroup);
-
-        this.viewerRenderInput.onscreenTexture = this.gfxSwapChain.getOnscreenTexture();
+        this.gfxDevice.pushDebugGroup(this.debugGroup);        
 
         for (let i = 0; i < webXRContext.views.length; i++) {
             this.viewerRenderInput.camera = this.xrCameraController.cameras[i];
@@ -237,7 +236,7 @@ export class Viewer {
 
             const widthRatio: number = xrViewPort.width / fbw;
             const heightRatio: number = xrViewPort.height / fbh;
-            this.viewerRenderInput.viewport = {
+            const viewportForBlitting = {
                 x: xrViewPort.x / xrViewPort.width * widthRatio,
                 y: xrViewPort.y / xrViewPort.height * heightRatio,
                 w: widthRatio,
@@ -246,7 +245,7 @@ export class Viewer {
 
             this.renderViewport();
 
-            this.gfxSwapChain.present();
+            this.gfxSwapChain.present_legacy(framebuffer, viewportForBlitting);
         }
 
         this.gfxDevice.popDebugGroup();

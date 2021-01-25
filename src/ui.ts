@@ -1591,14 +1591,7 @@ class XRSettings extends Panel {
 
         this.contents.innerHTML += `
         <div id="About">
-        <p>To enable VR in Chrome, make sure you go to <font color="aqua">chrome://flags/</font> and change the following settings:</p>
-        <ul>
-            <li> WebXR Device API - <font color="green"><strong>Enabled</strong></font></li>
-            <li>OpenXR support - <font color="green"><strong>Enabled</strong></font></li>
-            <li>OpenVR hardware support - <font color="green"><strong>Enabled</strong></font></li>
-            <li>Oculus hardware support - <font color="green"><strong>Enabled</strong></font></li>
-            <li>XR device sandboxing - <font color="red"><strong>Disabled</strong></font></li>
-        </ul>
+        <p>Ensure WebXR is enabled in your browser settings:</p>
         <p>Click on the <strong>Enable VR</strong> checkbox to go in VR mode.</p>
         <p>Press the <strong>Trigger</strong> to go up, and use the <strong>Grab Button</strong> to go down.
         You can move horizontally by using the <strong>Joystick</strong>.
