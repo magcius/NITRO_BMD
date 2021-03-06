@@ -46,6 +46,8 @@ export interface GXMaterial {
     hasLightsBlock?: boolean;
     hasFogBlock?: boolean;
     hasDynamicAlphaTest?: boolean;
+    extendedPosMtxArraySize?: number;
+    extendedTexMtxArraySize?: number;
 }
 
 export class Light {
@@ -287,7 +289,15 @@ export function materialHasDynamicAlphaTest(material: { hasDynamicAlphaTest?: bo
     return material.hasDynamicAlphaTest !== undefined ? material.hasDynamicAlphaTest : false;
 }
 
-function generateBindingsDefinition(material: { hasPostTexMtxBlock?: boolean, hasLightsBlock?: boolean, hasFogBlock?: boolean, usePnMtxIdx?: boolean, hasDynamicAlphaTest?: boolean }): string {
+export function materialPosMtxSize(material: { extendedPosMtxArraySize?: number }): number {
+    return material.extendedPosMtxArraySize !== undefined ? material.extendedPosMtxArraySize : 10;
+}
+
+export function materialTexMtxSize(material: { extendedTexMtxArraySize?: number }): number {
+    return material.extendedTexMtxArraySize !== undefined ? material.extendedTexMtxArraySize : 10;
+}
+
+function generateBindingsDefinition(material: { hasPostTexMtxBlock?: boolean, hasLightsBlock?: boolean, hasFogBlock?: boolean, usePnMtxIdx?: boolean, hasDynamicAlphaTest?: boolean, extendedPosMtxArraySize?: number, extendedTexMtxArraySize?: number }): string {
     return `
 // Expected to be constant across the entire scene.
 layout(std140) uniform ub_SceneParams {
@@ -320,7 +330,7 @@ layout(std140) uniform ub_MaterialParams {
     vec4 u_ColorAmbReg[2];
     vec4 u_KonstColor[4];
     vec4 u_Color[4];
-    Mat4x3 u_TexMtx[10];
+    Mat4x3 u_TexMtx[${materialTexMtxSize(material)}];
     vec4 u_TextureSizes[4];
     vec4 u_TextureBiases[2];
     Mat4x2 u_IndTexMtx[3];
@@ -344,7 +354,7 @@ ${materialHasDynamicAlphaTest(material) ? `
 // TODO(jstpierre): Rename from ub_DrawParams.
 layout(std140) uniform ub_DrawParams {
 ${materialUsePnMtxIdx(material) ? `
-    Mat4x3 u_PosMtx[10];
+    Mat4x3 u_PosMtx[${materialPosMtxSize(material)}];
 ` : `
     Mat4x3 u_PosMtx[1];
 `}
@@ -355,7 +365,7 @@ uniform sampler2D u_Texture[8];
 }
 
 export function getMaterialParamsBlockSize(material: GXMaterial): number {
-    let size = 4*2 + 4*2 + 4*4 + 4*4 + 4*3*10 + 4*4 + 4*2 + 4*2*3;
+    let size = 4*2 + 4*2 + 4*4 + 4*4 + 4*3*materialTexMtxSize(material) + 4*4 + 4*2 + 4*2*3;
     if (materialHasPostTexMtxBlock(material))
         size += 4*3*20;
     if (materialHasLightsBlock(material))
@@ -372,7 +382,7 @@ export function getDrawParamsBlockSize(material: GXMaterial): number {
     let size = 0;
 
     if (materialUsePnMtxIdx(material))
-        size += 4*3 * 10;
+        size += 4*3 * materialPosMtxSize(material);
     else
         size += 4*3 * 1;
 
@@ -1681,7 +1691,7 @@ export function parseLightChannels(r: DisplayListRegisters): LightChannelControl
     for (let i = 0; i < numColors; i++) {
         const colorCntrl = r.xfg(GX.XFRegister.XF_COLOR0CNTRL_ID + i);
         const alphaCntrl = r.xfg(GX.XFRegister.XF_ALPHA0CNTRL_ID + i);
-        const colorChannel = parseColorChannelControlRegister(colorCntrl); 
+        const colorChannel = parseColorChannelControlRegister(colorCntrl);
         const alphaChannel = parseColorChannelControlRegister(alphaCntrl);
         lightChannels.push({ colorChannel, alphaChannel });
     }

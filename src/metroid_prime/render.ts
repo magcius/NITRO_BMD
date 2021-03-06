@@ -45,6 +45,10 @@ mat4.mul(posMtx, fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStil
 
 const posMtxSkybox = mat4.clone(fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStillWrong);
 
+// Hard-coded max matrix slot counts
+export const maxPosMtxArraySize = 100;
+export const maxTexMtxArraySize = 100;
+
 export class RetroTextureHolder extends GXTextureHolder<TXTR> {
     public addMaterialSetTextures(device: GfxDevice, materialSet: MaterialSet): void {
         this.addTextures(device, materialSet.textures);
@@ -111,8 +115,8 @@ const viewMatrixScratch = mat4.create();
 const modelMatrixScratch = mat4.create();
 const modelViewMatrixScratch = mat4.create();
 const bboxScratch = new AABB();
-const envelopeModelMatrixScratch = nArray(10, () => mat4.create());
-const envelopeModelMatricesNulledScratch: (mat4|null)[] = new Array(10).fill(null);
+const envelopeModelMatrixScratch = nArray(maxTexMtxArraySize, () => mat4.create());
+const envelopeModelMatricesNulledScratch: (mat4|null)[] = new Array(maxTexMtxArraySize).fill(null);
 
 class SurfaceData {
     public shapeHelper: GXShapeHelperGfx;
@@ -196,7 +200,7 @@ class SurfaceInstance {
                     envelopeModelMatrices[j] = envelopeModelMatrixScratch[j];
                 }
             } else {
-                for (let j = 0; j < 10; j++)
+                for (let j = 0; j < this.packetParams.u_PosMtx.length; j++)
                     mat4.copy(this.packetParams.u_PosMtx[j], modelViewMatrixScratch);
             }
 
@@ -214,7 +218,7 @@ class SurfaceInstance {
 }
 
 const scratchMatrix = mat4.create();
-const materialParams = new MaterialParams();
+const materialParams = new MaterialParams(maxTexMtxArraySize);
 class MaterialGroupInstance {
     public materialHelper: GXMaterialHelperGfx;
     public gfxSampler: GfxSampler;
@@ -285,7 +289,7 @@ class MaterialGroupInstance {
         for (let i = 0; i < 4; i++)
             colorCopy(materialParams.u_Color[ColorKind.K0 + i], this.material.colorConstants[i]);
 
-        for (let i = 0; i < 10; i++)
+        for (let i = 0; i < materialParams.u_TexMtx.length; i++)
             mat4.identity(materialParams.u_TexMtx[i]);
 
         const animTime = ((viewerInput.time / 1000) % 900);
@@ -372,7 +376,7 @@ class MaterialGroupInstance {
         // transforms.
         if (envelopeModelMatrices) {
             let envelopeUVAnimation: UVAnimation|null = null;
-            for (let i = 0; i < 10; i++) {
+            for (let i = 0; i < envelopeModelMatrices.length; i++) {
                 const envelopeModelMatrix = envelopeModelMatrices[i];
                 if (!envelopeModelMatrix)
                     continue;

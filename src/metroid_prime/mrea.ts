@@ -31,6 +31,7 @@ import { Color, colorFromRGBA8, colorNewCopy, colorNewFromRGBA, TransparentBlack
 import { MathConstants } from "../MathHelpers";
 import { CSKR, SkinRule } from "./cskr";
 import { Endianness, getSystemEndianness } from "../endian";
+import { maxPosMtxArraySize } from "./render";
 
 export interface MREA {
     materialSet: MaterialSet;
@@ -858,8 +859,6 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     }
                 }
             }
-
-            loadedVertexData.totalVertexCount += numAdditionalVertices;
         } else if (sourceEnvelopeIdx !== undefined && cskr) {
             // MP2 already has generated envelope sets for skinning - resolve the matrices via the CSKR
             const draw = loadedVertexData.draws[0];
