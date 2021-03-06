@@ -767,7 +767,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                         dstDraw!.texMatrixTable[posMtxIdxToTexMtxIdx(matrixIndex)] = skinIdx;
                     }
 
-                    dstDraw!.posNrmMatrixTable[matrixIndex++] = skinIdx;
+                    dstDraw!.posMatrixTable[matrixIndex++] = skinIdx;
                 }
 
                 dstDraws.push(dstDraw!);
@@ -780,7 +780,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     dstDraw = {
                         indexOffset: i,
                         indexCount: 0,
-                        posNrmMatrixTable: Array(10).fill(0xFFFF),
+                        posMatrixTable: Array(10).fill(0xFFFF),
                         texMatrixTable: Array(10).fill(0xFFFF)
                     };
                 }
@@ -863,7 +863,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         } else if (sourceEnvelopeIdx !== undefined && cskr) {
             // MP2 already has generated envelope sets for skinning - resolve the matrices via the CSKR
             const draw = loadedVertexData.draws[0];
-            draw.posNrmMatrixTable = assertExists(cskr.envelopeSets).slice(sourceEnvelopeIdx * 10, (sourceEnvelopeIdx + 1) * 10);
+            draw.posMatrixTable = assertExists(cskr.envelopeSets).slice(sourceEnvelopeIdx * 10, (sourceEnvelopeIdx + 1) * 10);
         }
 
         const surface: Surface = {
@@ -1094,7 +1094,7 @@ export function parseLightLayer(stream: InputStream, version: number): AreaLight
                     vec3.set(light.gxLight.CosAtten, 1, 0, 0);
                 }
             }
-            
+
             // Calculate radius
             if (light.gxLight.DistAtten[1] < epsilon && light.gxLight.DistAtten[2] < epsilon) {
                 // No distance attenuation curve, so the light is effectively a directional.
@@ -1296,7 +1296,7 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem): MREA
     if (version === AreaVersion.MP1) {
         const scriptLayerOffs = dataSectionOffsTable[scriptLayersSectionIndex];
         stream.goTo(scriptLayerOffs);
-        
+
         const sclyMagic = stream.readFourCC();
         const sclyVersion = stream.readUint32();
         assert(sclyMagic === 'SCLY');
@@ -1525,7 +1525,7 @@ function parseMaterialSet_MP3(stream: InputStream, resourceSystem: ResourceSyste
                     const uvAnimations: UVAnimation[] = parseMaterialSet_UVAnimations(stream, 1);
                     if (uvAnimations.length !== 0)
                         uvAnimation = uvAnimations[0];
-                    
+
                     stream.goTo(uvAnimationEnd);
                 }
                 assert(stream.tell() === passEnd);

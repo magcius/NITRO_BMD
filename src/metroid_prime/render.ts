@@ -13,7 +13,7 @@ import { CMDL } from './cmdl';
 import { TextureMapping } from '../TextureHolder';
 import { GfxDevice, GfxFormat, GfxSampler, GfxMipFilterMode, GfxTexFilterMode, GfxWrapMode } from '../gfx/platform/GfxPlatform';
 import { GfxCoalescedBuffersCombo, GfxBufferCoalescerCombo } from '../gfx/helpers/BufferHelpers';
-import { GfxRenderInst, GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepthKey } from '../gfx/render/GfxRenderInstManager';
+import { GfxRenderInst, GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepthKey, setSortKeyBias } from "../gfx/render/GfxRenderInstManager";
 import { computeViewMatrixSkybox, computeViewMatrix } from '../Camera';
 import { LoadedVertexData, LoadedVertexDraw, LoadedVertexLayout } from '../gx/gx_displaylist';
 import { GXMaterialHacks, lightSetWorldPositionViewMatrix, lightSetWorldDirectionNormalMatrix, GX_Program } from '../gx/gx_material';
@@ -173,8 +173,8 @@ class SurfaceInstance {
 
             let envelopeModelMatrices: (mat4|null)[] | undefined = undefined;
             if (envelopeMats) {
-                for (let j = 0; j < packet.posNrmMatrixTable.length; j++) {
-                    const posNrmMatrixIdx = packet.posNrmMatrixTable[j];
+                for (let j = 0; j < packet.posMatrixTable.length; j++) {
+                    const posNrmMatrixIdx = packet.posMatrixTable[j];
 
                     // Leave existing matrix.
                     if (posNrmMatrixIdx === 0xFFFF)
