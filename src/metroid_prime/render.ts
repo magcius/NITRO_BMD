@@ -117,6 +117,7 @@ const modelViewMatrixScratch = mat4.create();
 const bboxScratch = new AABB();
 const envelopeModelMatrixScratch = nArray(maxTexMtxArraySize, () => mat4.create());
 const envelopeModelMatricesNulledScratch: (mat4|null)[] = new Array(maxTexMtxArraySize).fill(null);
+const defaultUVAnimationModelMatrixScratch = mat4.create();
 
 class SurfaceData {
     public shapeHelper: GXShapeHelperGfx;
@@ -176,6 +177,7 @@ class SurfaceInstance {
             const packet = loadedVertexData.draws[p];
 
             let envelopeModelMatrices: (mat4|null)[] | undefined = undefined;
+            let defaultUVAnimationModelMatrix = this.modelMatrix;
             if (envelopeMats) {
                 for (let j = 0; j < packet.posMatrixTable.length; j++) {
                     const posNrmMatrixIdx = packet.posMatrixTable[j];
@@ -185,6 +187,14 @@ class SurfaceInstance {
                         continue;
 
                     mat4.mul(this.packetParams.u_PosMtx[j], modelViewMatrixScratch, envelopeMats[posNrmMatrixIdx]);
+
+                    // First available position matrix serves as the fallback model matrix for UV animations.
+                    // This gets some decent environment mapping on MP2 skinned models, but no idea if this is
+                    // what the game does in practice (Cirrus).
+                    if (defaultUVAnimationModelMatrix === this.modelMatrix) {
+                        mat4.mul(defaultUVAnimationModelMatrixScratch, modelMatrixScratch, envelopeMats[posNrmMatrixIdx]);
+                        defaultUVAnimationModelMatrix = defaultUVAnimationModelMatrixScratch;
+                    }
                 }
 
                 envelopeModelMatrices = envelopeModelMatricesNulledScratch;
@@ -205,7 +215,7 @@ class SurfaceInstance {
             }
 
             const renderInst = renderHelper.renderInstManager.newRenderInst();
-            this.materialGroupInstance.prepareToRender(renderHelper.renderInstManager, viewerInput, this.modelMatrix, isSkybox, actorLights, OpaqueBlack, envelopeModelMatrices);
+            this.materialGroupInstance.prepareToRender(renderHelper.renderInstManager, viewerInput, defaultUVAnimationModelMatrix, isSkybox, actorLights, OpaqueBlack, envelopeModelMatrices);
             this.materialGroupInstance.setOnRenderInst(device, renderHelper.renderInstManager.gfxRenderCache, renderInst);
             this.surfaceData.shapeHelper.setOnRenderInst(renderInst, packet);
             this.materialGroupInstance.materialHelper.allocatePacketParamsDataOnInst(renderInst, this.packetParams);
@@ -751,6 +761,7 @@ export class CMDLRenderer {
     public modelMatrix: mat4 = mat4.create();
     private animTreeNode?: AnimTreeNode;
     private poseBuilder?: HierarchyPoseBuilder;
+    private pose?: PoseAsTransforms;
     private envelopeMats?: mat4[];
 
     constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData, public animationData?: AnimationData) {
@@ -801,15 +812,17 @@ export class CMDLRenderer {
             return;
 
         if (this.animationData && this.poseBuilder) {
-            if (!this.animTreeNode)
+            if (!this.animTreeNode) {
                 this.animTreeNode = this.animationData.metaAnim.GetAnimationTree(this.animationData.animSysContext);
+                this.pose = new PoseAsTransforms();
+            }
 
             this.animTreeNode.AdvanceView(new CharAnimTime(viewerInput.deltaTime / 1000));
             const simp = this.animTreeNode.Simplified();
             if (simp)
                 this.animTreeNode = simp as AnimTreeNode;
 
-            const pose = this.poseBuilder.BuildFromAnimRoot(this.animTreeNode);
+            this.poseBuilder.BuildFromAnimRoot(this.animTreeNode, this.pose!);
 
             const skinRules = this.animationData.cskr.skinRules;
             for (let i = 0; i < skinRules.length; ++i) {
@@ -817,7 +830,7 @@ export class CMDLRenderer {
                 const envMat = this.envelopeMats![i];
                 envMat.fill(0);
                 for (const weight of skinRule.weights) {
-                    const mat = pose.get(weight.boneId) as mat4;
+                    const mat = this.pose!.get(weight.boneId) as mat4;
                     mat4.multiplyScalarAndAdd(envMat, envMat, mat, weight.weight);
                 }
             }

@@ -638,7 +638,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         for (const format of vtxAttrFormats) {
             if (!(vtxAttrFormat & format.mask))
                 continue;
-            vcd[format.vtxAttrib] = { type: format.type, enableOutput: (format.mask <= 0x00FFFFFF) };
+            vcd[format.vtxAttrib] = { type: format.type, enableOutput: true };
         }
 
         // If MP1 and a CSKR is available, generate PNMTXIDX and one TEXnMTXIDX
@@ -863,6 +863,13 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             // MP2 already has generated envelope sets for skinning - resolve the matrices via the CSKR
             const draw = loadedVertexData.draws[0];
             draw.posMatrixTable = assertExists(cskr.envelopeSets).slice(sourceEnvelopeIdx * 10, (sourceEnvelopeIdx + 1) * 10);
+
+            // TODO(Cirrus): Figure out how TEXnMTXIDX handling works in MP2.
+            //
+            // Not every material with a position-dependent UV has a TEXnMTXIDX attribute present which suggests
+            // a per-surface default skin rule for UV transform purposes (first PNMTXIDX skin rule???)
+            //
+            // Some surfaces have TEX6MTXIDX but no static texgens in the material reference it (shadow mapping???)
         }
 
         const surface: Surface = {

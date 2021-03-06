@@ -43,7 +43,7 @@ function GetTransitionTree(a: AnimTreeNode, b: AnimTreeNode, context: AnimSysCon
  * Composite information of two or more animation resources
  */
 class SequenceFundamentals {
-    // TODO: EVNT nodes
+    // TODO(Cirrus): EVNT nodes
     constructor(public steadyStateInfo: SteadyStateAnimInfo) {
     }
 
@@ -54,7 +54,7 @@ class SequenceFundamentals {
         if (nodes.length > 0) {
             let node: AnimTreeNode = nodes[0].Clone() as AnimTreeNode;
             for (let i = 0; i < nodes.length; ++i) {
-                // TODO: EVNT nodes
+                // TODO(Cirrus): EVNT nodes
 
                 duration = duration.Add(node.GetTimeRemaining());
 
@@ -605,11 +605,11 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
             let ret = new Array(indices.length);
             for (let i = 0; i < indices.length; ++i) {
                 const rotation = setA[i].rotation && setB[i].rotation ?
-                    quat.slerp(quat.create(), setA[i].rotation as quat, setB[i].rotation as quat, w) : undefined;
+                    quat.slerp(/*recycle*/setA[i].rotation!, setA[i].rotation!, setB[i].rotation!, w) : undefined;
                 const translation = setA[i].translation && setB[i].translation ?
-                    vec3.lerp(vec3.create(), setA[i].translation as vec3, setB[i].translation as vec3, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].translation!, setA[i].translation!, setB[i].translation!, w) : undefined;
                 const scale = setA[i].scale && setB[i].scale ?
-                    vec3.lerp(vec3.create(), setA[i].scale as vec3, setB[i].scale as vec3, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].scale!, setA[i].scale!, setB[i].scale!, w) : undefined;
                 ret[i] = new PerSegmentData(rotation, translation, scale);
             }
             return ret;
@@ -676,10 +676,10 @@ export class AnimTreeBlend extends AnimTreeTweenBase {
         const ssB = this.right.GetSteadyStateAnimInfo();
         const resOffset = vec3.create();
         if (ssA.duration.Less(ssB.duration)) {
-            vec3.scaleAndAdd(resOffset, vec3.scale(vec3.create(), ssB.offset, 1.0 - this.blendWeight),
+            vec3.scaleAndAdd(resOffset, vec3.scale(resOffset, ssB.offset, 1.0 - this.blendWeight),
                 ssA.offset, ssB.duration.Div(ssA.duration) * this.blendWeight);
         } else if (ssB.duration < ssA.duration) {
-            vec3.scaleAndAdd(resOffset, vec3.scale(vec3.create(), ssB.offset,
+            vec3.scaleAndAdd(resOffset, vec3.scale(resOffset, ssB.offset,
                 ssA.duration.Div(ssB.duration) * (1.0 - this.blendWeight)), ssA.offset, this.blendWeight);
         } else {
             vec3.add(resOffset, ssA.offset, ssB.offset);
@@ -716,7 +716,7 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
     static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, transDur: CharAnimTime, runLeft: boolean,
                   interpolateAdvancement: boolean, name: string): AnimTreeTransition {
         return new AnimTreeTransition(outgoing, incoming, transDur, new CharAnimTime(), runLeft,
-            false /* TODO: Use Loop POI */, interpolateAdvancement, name);
+            false /* TODO(Cirrus): Use Loop POI */, interpolateAdvancement, name);
     }
 
     private AdvanceViewForTransitionalPeriod(dt: CharAnimTime): AdvancementResults {

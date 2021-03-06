@@ -2,7 +2,7 @@
 import * as PAK from './pak';
 import * as MLVL from './mlvl';
 import * as MREA from './mrea';
-import { ResourceGame, ResourceSystem } from "./resource";
+import { ResourceGame, ResourceSystem } from './resource';
 import { MREARenderer, RetroTextureHolder } from './render';
 
 import * as Viewer from '../viewer';
