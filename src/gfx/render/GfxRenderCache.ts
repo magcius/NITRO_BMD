@@ -111,15 +111,15 @@ export class GfxRenderCache {
     }
 
     public destroy(device: GfxDevice): void {
-        for (const [descriptor, bindings] of this.gfxBindingsCache.entries())
+        for (const bindings of this.gfxBindingsCache.values())
             device.destroyBindings(bindings);
-        for (const [descriptor, renderPipeline] of this.gfxRenderPipelinesCache.entries())
+        for (const renderPipeline of this.gfxRenderPipelinesCache.values())
             device.destroyRenderPipeline(renderPipeline);
-        for (const [descriptor, inputLayout] of this.gfxInputLayoutsCache.entries())
+        for (const inputLayout of this.gfxInputLayoutsCache.values())
             device.destroyInputLayout(inputLayout);
-        for (const [descriptor, program] of this.gfxProgramCache.entries())
+        for (const program of this.gfxProgramCache.values())
             device.destroyProgram(program);
-        for (const [descriptor, sampler] of this.gfxSamplerCache.entries())
+        for (const sampler of this.gfxSamplerCache.values())
             device.destroySampler(sampler);
         this.gfxBindingsCache.clear();
         this.gfxRenderPipelinesCache.clear();

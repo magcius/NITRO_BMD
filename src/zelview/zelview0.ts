@@ -1,19 +1,17 @@
 
-import { mat4 } from 'gl-matrix';
 import * as F3DZEX from './f3dzex';
 import { runDL_F3DZEX, RSPOutput, RSPState, RSPSharedOutput } from './f3dzex';
 import * as Viewer from '../viewer';
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { readString, hexzero } from '../util';
+import { readString, hexzero, assertExists } from '../util';
 
 // Loads the ZELVIEW0 format.
 
-class VFSEntry {
-    public filename: string;
-    public pStart: number;
-    public pEnd: number;
-    public vStart: number;
-    public vEnd: number;
+interface VFSEntry {
+    filename: string;
+    buffer: ArrayBufferSlice;
+    vStart: number;
+    vEnd: number;
 }
 
 export interface Rom {
@@ -28,23 +26,21 @@ export interface RomBanks {
 export class ZELVIEW0 {
     public entries: VFSEntry[];
     public sceneFile: VFSEntry;
-    public buffer: ArrayBufferSlice;
-    public view: DataView;
     public sharedOutput: RSPSharedOutput;
 
-    public lookupFile(pStart: number): VFSEntry {
-        for (const entry of this.entries)
-            if (entry.pStart === pStart)
-                return entry;
-        throw Error(`File containing 0x${pStart.toString(16)} not found`);
+    public lookupFile(vStart: number): VFSEntry {
+        for (let i = 0; i < this.entries.length; i++)
+            if (this.entries[i].vStart === vStart)
+                return this.entries[i];
+        throw "whoops";
+    }
+
+    public lookupAddress(file: VFSEntry, offs: number): { buffer: ArrayBufferSlice, offs: number } {
+        return { buffer: file.buffer, offs: 0x00 + offs };
     }
 
     public loadScene(scene: VFSEntry): Headers {
         return readScene(this, scene);
-    }
-
-    public loadMainScene() {
-        return this.loadScene(this.sceneFile);
     }
 }
 
@@ -66,26 +62,25 @@ export class Headers {
 export function readZELVIEW0(buffer: ArrayBufferSlice): ZELVIEW0 {
     const view = buffer.createDataView();
 
+    let offs = 0x00;
+
     const MAGIC = "ZELVIEW0";
-    if (readString(buffer, 0, MAGIC.length, false) !== MAGIC)
+    if (readString(buffer, offs + 0x00, MAGIC.length, false) !== MAGIC)
         throw new Error("Invalid ZELVIEW0 file");
 
-    let offs = 0x08;
-    const count = view.getUint8(offs);
-    offs += 0x04;
-    const mainFile = view.getUint8(offs);
-    offs += 0x04;
+    const count = view.getUint8(offs + 0x08);
+    const mainFile = view.getUint8(offs + 0x0C);
+    offs += 0x10;
 
     function readVFSEntry(): VFSEntry {
-        const entry: VFSEntry = new VFSEntry();
-        entry.filename = readString(buffer, offs, 0x30);
-        offs += 0x30;
-        entry.pStart = view.getUint32(offs, true);
-        entry.pEnd = view.getUint32(offs + 0x04, true);
-        entry.vStart = view.getUint32(offs + 0x08, true);
-        entry.vEnd = view.getUint32(offs + 0x0C, true);
-        offs += 0x10;
-        return entry;
+        const filename = readString(buffer, offs + 0x00, 0x30);
+        const vStart = view.getUint32(offs + 0x30, true);
+        const vEnd = view.getUint32(offs + 0x34, true);
+        const pStart = view.getUint32(offs + 0x38, true);
+        const pEnd = view.getUint32(offs + 0x3C, true);
+        const bufferFile = buffer.slice(pStart, pEnd);
+        offs += 0x40;
+        return { filename, buffer: bufferFile, vStart, vEnd };
     }
 
     const entries: VFSEntry[] = [];
@@ -95,8 +90,6 @@ export function readZELVIEW0(buffer: ArrayBufferSlice): ZELVIEW0 {
     const zelview0 = new ZELVIEW0();
     zelview0.entries = entries;
     zelview0.sceneFile = entries[mainFile];
-    zelview0.view = view;
-    zelview0.buffer = buffer;
 
     return zelview0;
 }
@@ -123,161 +116,46 @@ enum HeaderCommands {
     End = 0x14,
 }
 
-function readHeaders(rom: ZELVIEW0, offs: number, banks: RomBanks, sharedOutput: RSPSharedOutput): Headers {
+function readHeaders(rom: ZELVIEW0, file: VFSEntry, banks: RomBanks, sharedOutput: RSPSharedOutput): Headers {
+    const view = file.buffer.createDataView();
+
     const headers = new Headers();
-    headers.filename = rom.sceneFile.filename;
+    headers.filename = file.filename;
+
+    function lookupBank(addr: number): VFSEntry {
+        const bankIdx = addr >>> 24;
+        if (bankIdx === 0x02)
+            return assertExists(banks.scene);
+        else if (bankIdx === 0x03)
+            return assertExists(banks.room);
+        else
+            throw "whoops";
+    }
 
     function lookupAddress(addr: number): { buffer: ArrayBufferSlice, offs: number } {
-        const bankIdx = addr >>> 24;
+        const bank = lookupBank(addr);
         const offs = addr & 0x00FFFFFF;
-        function findBank() {
-            switch (bankIdx) {
-                case 0x02: return banks.scene;
-                case 0x03:
-                    if (banks.room === undefined)
-                        throw Error(`room is undefined`);
-                    return banks.room;
-                default:
-                    console.error(`bank for 0x${hexzero(addr, 8)} not found`);
-                    throw Error(`bank not found`);
-            }
-        }
-        const bank = findBank();
-        if (bank === null)
-            throw Error(`null bank`);
-        const absOffs = bank.vStart + offs;
-        if (absOffs > bank.vEnd)
-            throw Error(`absOffs out of range`);
-        return { buffer: rom.buffer, offs: absOffs };
+        return rom.lookupAddress(bank, offs);
     }
 
     headers.rom = { lookupAddress: lookupAddress };
-    
+
     function loadAddress(addr: number): number {
         const lkup = lookupAddress(addr);
         return lkup.buffer.createDataView().getUint32(lkup.offs);
     }
 
-    function readCollision(collisionAddr: number) {
-        const lkup = lookupAddress(collisionAddr);
-        const view = lkup.buffer.createDataView();
-        const offs = lkup.offs;
-
-        function readVerts(N: number, addr: number): Uint16Array {
-            const lkup = lookupAddress(addr);
-            const view = lkup.buffer.createDataView();
-            let offs = lkup.offs;
-
-            const verts = new Uint16Array(N * 3);
-            for (let i = 0; i < N; i++) {
-                verts[i * 3 + 0] = view.getInt16(offs + 0x00, false);
-                verts[i * 3 + 1] = view.getInt16(offs + 0x02, false);
-                verts[i * 3 + 2] = view.getInt16(offs + 0x04, false);
-                offs += 0x06;
-            }
-            return verts;
-        }
-
-        const vertsN = rom.view.getUint16(offs + 0x0C, false);
-        const vertsAddr = rom.view.getUint32(offs + 0x10, false);
-        const verts = readVerts(vertsN, vertsAddr);
-
-        function readPolys(N: number, addr: number): Uint16Array {
-            const lkup = lookupAddress(addr);
-            const view = lkup.buffer.createDataView();
-            let offs = lkup.offs;
-
-            const polys = new Uint16Array(N * 3);
-            for (let i = 0; i < N; i++) {
-                polys[i * 3 + 0] = view.getUint16(offs + 0x02, false) & 0x0FFF;
-                polys[i * 3 + 1] = view.getUint16(offs + 0x04, false) & 0x0FFF;
-                polys[i * 3 + 2] = view.getUint16(offs + 0x06, false) & 0x0FFF;
-                offs += 0x10;
-            }
-            return polys;
-        }
-
-        const polysN = view.getUint16(offs + 0x14, false);
-        const polysAddr = view.getUint32(offs + 0x18, false);
-        const polys = readPolys(polysN, polysAddr);
-
-        function readWaters(N: number, addr: number): Uint16Array {
-            // XXX: While we should probably keep the actual stuff about
-            // water boxes, I'm just drawing them, so let's just record
-            // a quad.
-            const lkup = lookupAddress(addr);
-            const view = lkup.buffer.createDataView();
-            let offs = lkup.offs;
-
-            const waters = new Uint16Array(N * 3 * 4);
-
-            for (let i = 0; i < N; i++) {
-                const x = view.getInt16(offs + 0x00, false);
-                const y = view.getInt16(offs + 0x02, false);
-                const z = view.getInt16(offs + 0x04, false);
-                const sx = view.getInt16(offs + 0x06, false);
-                const sz = view.getInt16(offs + 0x08, false);
-                waters[i*3*4+0] = x;
-                waters[i*3*4+1] = y;
-                waters[i*3*4+2] = z;
-                waters[i*3*4+3] = x + sx;
-                waters[i*3*4+4] = y;
-                waters[i*3*4+5] = z;
-                waters[i*3*4+6] = x;
-                waters[i*3*4+7] = y;
-                waters[i*3*4+8] = z + sz;
-                waters[i*3*4+9] = x + sx;
-                waters[i*3*4+10] = y;
-                waters[i*3*4+11] = z + sz;
-                offs += 0x10;
-            }
-            return waters;
-        }
-
-        const watersN = rom.view.getUint16(offs + 0x24, false);
-        const watersAddr = rom.view.getUint32(offs + 0x28, false);
-        //const waters = readWaters(watersN, watersAddr);
-        // TODO: implement waters
-        const waters = new Uint16Array([]);
-
-        function readCamera(addr: number): mat4 {
-            const skyboxCamera = loadAddress(addr + 0x04);
-            const lkup = lookupAddress(skyboxCamera);
-            const view = lkup.buffer.createDataView();
-            const offs = lkup.offs;
-            const x = view.getInt16(offs + 0x00, false);
-            const y = view.getInt16(offs + 0x02, false);
-            const z = view.getInt16(offs + 0x04, false);
-            const a = view.getUint16(offs + 0x06, false) / 0xFFFF * (Math.PI * 2);
-            const b = view.getUint16(offs + 0x08, false) / 0xFFFF * (Math.PI * 2) + Math.PI;
-            const c = view.getUint16(offs + 0x0A, false) / 0xFFFF * (Math.PI * 2);
-            const d = view.getUint16(offs + 0x0C, false);
-
-            const mtx = mat4.create();
-            mat4.translate(mtx, mtx, [x, y, z]);
-            mat4.rotateZ(mtx, mtx, c);
-            mat4.rotateY(mtx, mtx, b);
-            mat4.rotateX(mtx, mtx, -a);
-            return mtx;
-        }
-
-        const cameraAddr = view.getUint32(offs + 0x20, false);
-        const camera = readCamera(cameraAddr);
-
-        return { verts, polys, waters, camera };
-    }
-
     function readRoom(file: VFSEntry): Headers {
         const banks2: RomBanks = { scene: banks.scene, room: file };
-        return readHeaders(rom, file.vStart, banks2, sharedOutput);
+        return readHeaders(rom, file, banks2, sharedOutput);
     }
 
     function readRooms(nRooms: number, roomTableAddr: number): Headers[] {
         const rooms = [];
         for (let i = 0; i < nRooms; i++) {
-            const pStart = loadAddress(roomTableAddr);
-            console.log(`room ${i} pStart 0x${hexzero(pStart, 8)}`);
-            const file = rom.lookupFile(pStart);
+            const vStart = loadAddress(roomTableAddr);
+            console.log(`room ${i} vStart 0x${hexzero(vStart, 8)}`);
+            const file = rom.lookupFile(vStart);
             const room = readRoom(file);
             room.filename = file.filename;
             rooms.push(room);
@@ -344,11 +222,10 @@ function readHeaders(rom: ZELVIEW0, offs: number, banks: RomBanks, sharedOutput:
     headers.rooms = [];
     headers.mesh = null;
 
-    console.log(`Starting parsing at 0x${offs.toString(16)}`);
-
+    let offs = 0;
     while (true) {
-        const cmd1 = rom.view.getUint32(offs, false);
-        const cmd2 = rom.view.getUint32(offs + 4, false);
+        const cmd1 = view.getUint32(offs + 0x00, false);
+        const cmd2 = view.getUint32(offs + 0x04, false);
         offs += 8;
 
         const cmdType = cmd1 >> 24;
@@ -377,5 +254,5 @@ function readHeaders(rom: ZELVIEW0, offs: number, banks: RomBanks, sharedOutput:
 function readScene(zelview0: ZELVIEW0, file: VFSEntry): Headers {
     const banks: RomBanks = { scene: file };
     zelview0.sharedOutput = new F3DZEX.RSPSharedOutput();
-    return readHeaders(zelview0, file.vStart, banks, zelview0.sharedOutput);
+    return readHeaders(zelview0, file, banks, zelview0.sharedOutput);
 }

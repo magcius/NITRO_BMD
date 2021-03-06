@@ -1,6 +1,6 @@
 
 import * as rw from 'librw';
-import * as meta from './scenes.json';
+import meta from './scenes.json';
 import { SceneDesc, SceneGroup, SceneGfx } from '../viewer';
 import { initializeBasis, BasisFile, BasisFormat } from '../vendor/basis_universal';
 import { inflate } from 'pako';
@@ -14,7 +14,7 @@ import { parseTimeCycle, ColorSet } from './time';
 import { parseWaterPro, waterMeshFragData, waterDefinition, parseWater } from './water';
 import { mat4 } from 'gl-matrix';
 import { AABB } from '../Geometry';
-import { GfxRendererLayer } from '../gfx/render/GfxRenderer';
+import { GfxRendererLayer } from '../gfx/render/GfxRenderInstManager';
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { colorNewCopy, OpaqueBlack } from '../Color';
 import { MathConstants } from '../MathHelpers';

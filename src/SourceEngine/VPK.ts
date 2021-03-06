@@ -2,7 +2,7 @@
 // Valve Packfile. Only handles newest VPK version.
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { assert, readString, leftPad, fallbackUndefined } from "../util";
+import { assert, readString, leftPad, fallbackUndefined, nullify } from "../util";
 import { DataFetcher, AbortedCallback } from "../DataFetcher";
 
 interface VPKFileEntryChunk {
@@ -107,7 +107,7 @@ export class VPKMount {
     }
 
     public findEntry(path: string): VPKFileEntry | null {
-        return fallbackUndefined(this.dir.entries.find((entry) => entry.path === path), null);
+        return nullify(this.dir.entries.find((entry) => entry.path === path));
     }
 
     private async fetchFileDataInternal(entry: VPKFileEntry, abortedCallback: AbortedCallback): Promise<ArrayBufferSlice> {

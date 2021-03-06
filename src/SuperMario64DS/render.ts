@@ -11,7 +11,7 @@ import { computeViewMatrix, computeViewMatrixSkybox } from '../Camera';
 import { TextureMapping } from '../TextureHolder';
 import { GfxFormat, GfxBufferUsage, GfxBlendMode, GfxBlendFactor, GfxDevice, GfxBuffer, GfxVertexBufferFrequency, GfxTexFilterMode, GfxMipFilterMode, GfxInputState, GfxInputLayout, GfxVertexAttributeDescriptor, GfxSampler, makeTextureDescriptor2D, GfxMegaStateDescriptor, GfxTexture, GfxInputLayoutBufferDescriptor } from '../gfx/platform/GfxPlatform';
 import { fillMatrix4x3, fillVec4, fillMatrix4x2 } from '../gfx/helpers/UniformBufferHelpers';
-import { GfxRenderInstManager, GfxRenderInst, makeSortKey, GfxRendererLayer } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, GfxRenderInst, makeSortKey, GfxRendererLayer } from '../gfx/render/GfxRenderInstManager';
 import { makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers';
 import { parseTexImageParamWrapModeS, parseTexImageParamWrapModeT } from './nitro_tex';
 import { assert, nArray } from '../util';
@@ -218,9 +218,8 @@ class MaterialData {
         if (texture !== null) {
             this.gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, 1));
             device.setResourceName(this.gfxTexture, texture.name);
-            const hostAccessPass = device.createHostAccessPass();
-            hostAccessPass.uploadTextureData(this.gfxTexture, 0, [texture.pixels]);
-            device.submitPass(hostAccessPass);
+
+            device.uploadTextureData(this.gfxTexture, 0, [texture.pixels]);
 
             this.gfxSampler = cache.createSampler(device, {
                 minFilter: GfxTexFilterMode.POINT,

@@ -2,9 +2,11 @@
 import { mat4, vec3 } from "gl-matrix";
 import { Camera } from "../Camera";
 import { J3DFrameCtrl, J3DFrameCtrl__UpdateFlags } from "../Common/JSYSTEM/J3D/J3DGraphAnimator";
-import { J3DModelInstance } from "../Common/JSYSTEM/J3D/J3DGraphBase";
-import { computeEulerAngleRotationFromSRTMatrix, computeModelMatrixSRT } from "../MathHelpers";
-import { assertExists, fallback } from "../util";
+import { J3DModelData, J3DModelInstance, MaterialInstance, TEX1Data } from "../Common/JSYSTEM/J3D/J3DGraphBase";
+import { GfxDevice, GfxFormat, GfxNormalizedViewportCoords } from "../gfx/platform/GfxPlatform";
+import { LoadedVertexData, LoadedVertexLayout, VertexAttributeInput } from "../gx/gx_displaylist";
+import { computeEulerAngleRotationFromSRTMatrix, computeModelMatrixSRT, computeNormalMatrix } from "../MathHelpers";
+import { align, assertExists, fallback, nArray, nullify } from "../util";
 import * as Viewer from '../viewer';
 import { calcGravity, connectToScene, invalidateCollisionPartsForActor, isBckExist, isBckPlaying, isBpkExist, isBpkPlaying, isBrkExist, isBrkPlaying, isBtkExist, isBtkPlaying, isBtpExist, isBtpPlaying, isBvaExist, isBvaPlaying, resetAllCollisionMtx, startBck, startBpk, startBrk, startBtk, startBtp, startBva, validateCollisionPartsForActor } from "./ActorUtil";
 import { BckCtrl, BrkPlayer, BtkPlayer, BtpPlayer, BvaPlayer, XanimePlayer } from "./Animation";
@@ -14,13 +16,17 @@ import { EffectKeeper } from "./EffectSystem";
 import { HitSensor, HitSensorKeeper } from "./HitSensor";
 import { createCsvParser, getJMapInfoBool, getJMapInfoRotateLocal, getJMapInfoTransLocal, JMapInfoIter } from "./JMapInfo";
 import { ActorLightCtrl } from "./LightData";
-import { getDeltaTimeFrames, getObjectName, ResourceHolder, SceneObjHolder, SpecialTextureType } from "./Main";
+import { getDeltaTimeFrames, getObjectName, SceneObjHolder, SpecialTextureType } from "./Main";
 import { MovementType, NameObj, NameObjGroup } from "./NameObj";
 import { RailRider } from "./RailRider";
 import { ShadowControllerList } from "./Shadow";
 import { Spine } from "./Spine";
 import { createStageSwitchCtrl, StageSwitchCtrl } from "./Switch";
-
+import * as GX from '../gx/gx_enum';
+import { ANK1, BCK, BMD, BPK, BRK, BTK, BTP, BVA, ShapeDisplayFlags, TexMtxMapMode, TPT1, TRK1, TTK1, VAF1 } from "../Common/JSYSTEM/J3D/J3DLoader";
+import { MaterialParams, PacketParams } from "../gx/gx_render";
+import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
+import { JKRArchive, RARCFile } from "../Common/JSYSTEM/JKRArchive";
 
 class ActorAnimDataInfo {
     public Name: string;
@@ -134,6 +140,254 @@ class ActorAnimKeeper {
         } else {
             return isBckPlaying(actor, animationName);
         }
+    }
+}
+
+function patchInTexMtxIdxBuffer(loadedVertexLayout: LoadedVertexLayout, loadedVertexData: LoadedVertexData, bufferStride: number, texMtxIdxBaseOffsets: number[]): void {
+    const vertexCount = loadedVertexData.totalVertexCount;
+
+    const buffer = new Uint8Array(vertexCount * bufferStride);
+    loadedVertexLayout.vertexBufferStrides[1] = bufferStride;
+    loadedVertexData.vertexBuffers[1] = buffer.buffer;
+
+    const view = new DataView(loadedVertexData.vertexBuffers[0]);
+    const loadedStride = loadedVertexLayout.vertexBufferStrides[0];
+    let offs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
+
+    for (let i = 0; i < vertexCount; i++) {
+        const p = view.getFloat32(offs, true);
+        for (let j = 0; j < bufferStride; j++) {
+            if (texMtxIdxBaseOffsets[j] >= 0)
+                buffer[i*bufferStride + j] = p + (texMtxIdxBaseOffsets[j] / 3);
+        }
+        offs += loadedStride;
+    }
+}
+
+function mtxModeIsUsingEnvMap(mode: TexMtxMapMode): boolean {
+    return (mode === TexMtxMapMode.EnvmapBasic || mode === TexMtxMapMode.EnvmapOld || mode === TexMtxMapMode.Envmap);
+}
+
+function mtxModeIsUsingProjMap(mode: TexMtxMapMode): boolean {
+    return (mode === TexMtxMapMode.ProjmapBasic || mode === TexMtxMapMode.ViewProjmapBasic || mode === TexMtxMapMode.Projmap || mode === TexMtxMapMode.ViewProjmap);
+}
+
+function patchBMD(bmd: BMD): void {
+    for (let i = 0; i < bmd.shp1.shapes.length; i++) {
+        const shape = bmd.shp1.shapes[i];
+        if (shape.displayFlags !== ShapeDisplayFlags.MULTI)
+            continue;
+
+        const material = bmd.mat3.materialEntries[shape.materialIndex];
+        material.gxMaterial.useTexMtxIdx = nArray(8, () => false);
+
+        let bufferStride = 0;
+        let texMtxIdxBaseOffsets: number[] = nArray(8, () => -1);
+        let hasAnyEnvMap = false;
+        for (let j = 0; j < material.gxMaterial.texGens.length; j++) {
+            const texGen = material.gxMaterial.texGens[j];
+            if (texGen === null)
+                continue;
+            if (texGen.matrix === GX.TexGenMatrix.IDENTITY)
+                continue;
+
+            const texMtxIdx = (texGen.matrix - GX.TexGenMatrix.TEXMTX0) / 3;
+            const texMtx = assertExists(material.texMatrices[texMtxIdx]);
+
+            const matrixMode: TexMtxMapMode = texMtx.info & 0x3F;
+            const isUsingEnvMap = mtxModeIsUsingEnvMap(matrixMode);
+            const isUsingProjMap = mtxModeIsUsingProjMap(matrixMode);
+
+            if (isUsingEnvMap || isUsingProjMap) {
+                // Mark as requiring TexMtxIdx
+                material.gxMaterial.useTexMtxIdx[j] = true;
+                texGen.postMatrix = GX.PostTexGenMatrix.PTTEXMTX0 + (j * 3);
+
+                if (isUsingEnvMap)
+                    texMtxIdxBaseOffsets[j] = GX.TexGenMatrix.TEXMTX0;
+                else if (isUsingProjMap)
+                    texMtxIdxBaseOffsets[j] = GX.TexGenMatrix.PNMTX0;
+
+                bufferStride = Math.max(bufferStride, j + 1);
+                hasAnyEnvMap = hasAnyEnvMap || isUsingEnvMap;
+
+                // Disable optimizations
+                material.gxMaterial.hasPostTexMtxBlock = true;
+            }
+        }
+
+        // If we have an environment map, then all texture matrices are IDENTITY,
+        // as we're going to reuse the texture memory for normal environment matrices.
+        // Done in ShapeUserPacketData::init() with the GDSetCurrentMtx().
+        if (hasAnyEnvMap) {
+            for (let j = 0; j < material.gxMaterial.texGens.length; j++)
+                material.gxMaterial.texGens[j].matrix = GX.TexGenMatrix.IDENTITY;
+        }
+
+        if (bufferStride > 0) {
+            bufferStride = align(bufferStride, 4);
+
+            for (let j = 0; j < shape.mtxGroups.length; j++) {
+                const mtxGroup = shape.mtxGroups[j];
+                patchInTexMtxIdxBuffer(shape.loadedVertexLayout, mtxGroup.loadedVertexData, bufferStride, texMtxIdxBaseOffsets);
+            }
+
+            if (texMtxIdxBaseOffsets[0] >= 0 || texMtxIdxBaseOffsets[1] >= 0 || texMtxIdxBaseOffsets[2] >= 0 || texMtxIdxBaseOffsets[3] >= 0)
+                shape.loadedVertexLayout.singleVertexInputLayouts.push({ attrInput: VertexAttributeInput.TEX0123MTXIDX, format: GfxFormat.U8_RGBA_NORM, bufferIndex: 1, bufferOffset: 0 });
+            if (texMtxIdxBaseOffsets[4] >= 0 || texMtxIdxBaseOffsets[5] >= 0 || texMtxIdxBaseOffsets[6] >= 0 || texMtxIdxBaseOffsets[7] >= 0)
+                shape.loadedVertexLayout.singleVertexInputLayouts.push({ attrInput: VertexAttributeInput.TEX4567MTXIDX, format: GfxFormat.U8_RGBA_NORM, bufferIndex: 1, bufferOffset: 4 });
+        }
+    }
+
+    // Patch in GXSetDstAlpha. This is normally done in the main loop, but we hack it in here...
+    // This should only be done on opaque objects.
+    for (let i = 0; i < bmd.mat3.materialEntries.length; i++) {
+        const mat = bmd.mat3.materialEntries[i];
+        if (mat.translucent || mat.gxMaterial.ropInfo.blendMode !== GX.BlendMode.NONE)
+            continue;
+
+        mat.gxMaterial.ropInfo.alphaUpdate = true;
+        mat.gxMaterial.ropInfo.dstAlpha = 0.0;
+    }
+}
+
+// This is roughly ShapePacketUserData::callDL().
+function fillMaterialParamsCallback(materialParams: MaterialParams, materialInstance: MaterialInstance, viewMatrix: mat4, modelMatrix: mat4, camera: Camera, viewport: Readonly<GfxNormalizedViewportCoords>, packetParams: PacketParams): void {
+    const material = materialInstance.materialData.material;
+    let hasAnyEnvMap = false;
+
+    for (let i = 0; i < material.texMatrices.length; i++) {
+        const texMtx = material.texMatrices[i];
+        if (texMtx === null)
+            continue;
+
+        const matrixMode = texMtx.info & 0x3F;
+        const isUsingEnvMap = (matrixMode === 0x01 || matrixMode === 0x06 || matrixMode === 0x07);
+
+        if (isUsingEnvMap)
+            hasAnyEnvMap = true;
+
+        const dst = materialParams.u_PostTexMtx[i];
+        const flipY = materialParams.m_TextureMapping[i].flipY;
+
+        materialInstance.calcPostTexMtxInput(dst, texMtx, viewMatrix);
+        const texSRT = scratchMatrix;
+        materialInstance.calcTexSRT(texSRT, i);
+        materialInstance.calcTexMtx(dst, texMtx, texSRT, modelMatrix, camera, viewport, flipY);
+    }
+
+    if (hasAnyEnvMap) {
+        // Fill texture memory with normal matrices.
+        for (let i = 0; i < 10; i++) {
+            const m = materialParams.u_TexMtx[i];
+            computeNormalMatrix(m, packetParams.u_PosMtx[i], true);
+        }
+    }
+}
+
+function patchModelData(bmdModel: J3DModelData): void {
+    // Kill off the sort-key bias; the game doesn't use the typical J3D rendering algorithm in favor
+    // of its own sort, which needs to be RE'd.
+    for (let i = 0; i < bmdModel.shapeData.length; i++)
+        bmdModel.shapeData[i].sortKeyBias = 0;
+
+    const modelMaterialData = bmdModel.modelMaterialData.materialData!;
+    for (let i = 0; i < modelMaterialData.length; i++) {
+        const materialData = modelMaterialData[i];
+
+        const gxMaterial = materialData.material.gxMaterial;
+        if (gxMaterial.useTexMtxIdx !== undefined && gxMaterial.useTexMtxIdx.some((v) => v)) {
+            // Requires a callback.
+            materialData.fillMaterialParamsCallback = fillMaterialParamsCallback;
+        }
+    }
+}
+
+export type ResTable<T> = Map<string, T>;
+
+export function initEachResTable<T>(arc: JKRArchive, table: ResTable<T>, extensions: string[], constructor: (file: RARCFile, ext: string, filenameWithoutExtension: string) => T, includeExtension: boolean = false): void {
+    for (let i = 0; i < arc.files.length; i++) {
+        const file = arc.files[i];
+
+        for (let j = 0; j < extensions.length; j++) {
+            const ext = extensions[j];
+            if (file.name.endsWith(ext)) {
+                const filenameWithoutExtension = file.name.slice(0, -ext.length).toLowerCase();
+                const key = includeExtension ? file.name : filenameWithoutExtension;
+                table.set(key, constructor(file, ext, filenameWithoutExtension));
+            }
+        }
+    }
+}
+
+export class ResourceHolder {
+    public modelTable = new Map<string, J3DModelData>();
+    public motionTable = new Map<string, ANK1>();
+    public btkTable = new Map<string, TTK1>();
+    public bpkTable = new Map<string, TRK1>();
+    public btpTable = new Map<string, TPT1>();
+    public brkTable = new Map<string, TRK1>();
+    public bvaTable = new Map<string, VAF1>();
+    public banmtTable = new Map<string, BckCtrl>();
+    public viewerTextures: Viewer.Texture[] = [];
+
+    constructor(device: GfxDevice, cache: GfxRenderCache, objectName: string, public arc: JKRArchive) {
+        initEachResTable(this.arc, this.modelTable, ['.bdl', '.bmd'], (file, ext, filenameWithoutExtension) => {
+            const bmd = BMD.parse(file.buffer);
+            patchBMD(bmd);
+            const modelData = new J3DModelData(device, cache, bmd);
+            patchModelData(modelData);
+            this.addTEX1(modelData.modelMaterialData.tex1Data, objectName, filenameWithoutExtension);
+            return modelData;
+        });
+
+        initEachResTable(this.arc, this.motionTable, ['.bck', '.bca'], (file, ext) => {
+            if (ext === '.bca')
+                debugger;
+
+            return BCK.parse(file.buffer);
+        });
+
+        // .blk
+        initEachResTable(this.arc, this.btkTable, ['.btk'], (file) => BTK.parse(file.buffer));
+        initEachResTable(this.arc, this.bpkTable, ['.bpk'], (file) => BPK.parse(file.buffer));
+        initEachResTable(this.arc, this.btpTable, ['.btp'], (file) => BTP.parse(file.buffer));
+        initEachResTable(this.arc, this.brkTable, ['.brk'], (file) => BRK.parse(file.buffer));
+        // .bas
+        // .bmt
+        initEachResTable(this.arc, this.bvaTable, ['.bva'], (file) => BVA.parse(file.buffer));
+        initEachResTable(this.arc, this.banmtTable, ['.banmt'], (file) => BckCtrl.parse(file.buffer));
+    }
+
+    private addTEX1(tex1Data: TEX1Data | null, objectName: string, filenameWithoutExtension: string): void {
+        if (tex1Data === null)
+            return;
+
+        const prefix = (filenameWithoutExtension.toLowerCase() === objectName.toLowerCase()) ? objectName : `${objectName}/${filenameWithoutExtension}`;
+        for (let i = 0; i < tex1Data.viewerTextures.length; i++) {
+            const texture = tex1Data.viewerTextures[i];
+            if (texture === null)
+                continue;
+            texture.name = `${prefix}/${texture.name}`;
+            this.viewerTextures.push(texture);
+        }
+    }
+
+    public getModel(name: string): J3DModelData {
+        return assertExists(this.modelTable.get(name.toLowerCase()));
+    }
+
+    public getRes<T>(table: ResTable<T>, name: string): T | null {
+        return nullify(table.get(name.toLowerCase()));
+    }
+
+    public isExistRes<T>(table: ResTable<T>, name: string): boolean {
+        return table.has(name.toLowerCase());
+    }
+
+    public destroy(device: GfxDevice): void {
+        for (const v of this.modelTable.values())
+            v.destroy(device);
     }
 }
 
@@ -515,7 +769,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
         // Do nothing by default.
     }
 
-    public getSensor(name: string): HitSensor | null {
+    public getSensor(name: string | null): HitSensor | null {
         if (this.hitSensorKeeper !== null)
             return this.hitSensorKeeper.getSensor(name);
         else
@@ -548,7 +802,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
     }
 
     public makeActorDead(sceneObjHolder: SceneObjHolder): void {
-        vec3.set(this.velocity, 0, 0, 0);
+        vec3.zero(this.velocity);
         if (this.hitSensorKeeper !== null) {
             this.hitSensorKeeper.clear();
             this.hitSensorKeeper.invalidateBySystem();
@@ -596,7 +850,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
     }
 
     protected offScenario(sceneObjHolder: SceneObjHolder): void {
-        vec3.set(this.velocity, 0, 0, 0);
+        // vec3.zero(this.velocity);
         if (this.hitSensorKeeper !== null) {
             this.hitSensorKeeper.clear();
             this.hitSensorKeeper.invalidateBySystem();
@@ -826,7 +1080,7 @@ export class LiveActor<TNerve extends number = number> extends NameObj {
                 this.initWaitPhase -= deltaTimeFrames;
             } else {
                 this.spine.changeNerve();
-                this.updateSpine(sceneObjHolder, this.getCurrentNerve(), deltaTimeFrames);
+                this.updateSpine(sceneObjHolder, this.spine.getCurrentNerve(), deltaTimeFrames);
                 this.spine.updateTick(deltaTimeFrames);
                 this.spine.changeNerve();
             }

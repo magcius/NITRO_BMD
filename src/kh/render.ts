@@ -5,18 +5,19 @@ import * as Bin from './bin';
 import * as BinTex from './bin_tex';
 import * as UI from '../ui';
 import * as Viewer from '../viewer';
-import { BasicRenderTarget, depthClearRenderPassDescriptor, opaqueBlackFullClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { opaqueBlackFullClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
 import { DeviceProgram } from "../Program";
 import { fillMatrix4x3, fillMatrix4x4 } from '../gfx/helpers/UniformBufferHelpers';
-import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxBuffer, GfxBufferUsage, GfxCompareMode, GfxCullMode, GfxDevice, GfxFormat, GfxHostAccessPass, GfxInputLayout, GfxInputState, GfxMipFilterMode, GfxRenderPass, GfxSampler, GfxTexFilterMode, GfxTexture, GfxTextureDimension, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxWrapMode, GfxProgram, GfxMegaStateDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
+import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxBuffer, GfxBufferUsage, GfxCompareMode, GfxCullMode, GfxDevice, GfxFormat, GfxInputLayout, GfxInputState, GfxMipFilterMode, GfxRenderPass, GfxSampler, GfxTexFilterMode, GfxTexture, GfxTextureDimension, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxWrapMode, GfxProgram, GfxMegaStateDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
 import { makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers';
 import { mat4, vec2, vec4 } from 'gl-matrix';
 import { TextureHolder, TextureMapping } from '../TextureHolder';
 import { nArray, assertExists } from '../util';
-import { GfxRenderInstManager, executeOnPass } from '../gfx/render/GfxRenderer';
-import { GfxRenderDynamicUniformBuffer } from '../gfx/render/GfxRenderDynamicUniformBuffer';
+import { GfxRenderInstManager, executeOnPass } from '../gfx/render/GfxRenderInstManager';
 import { reverseDepthForCompareMode } from '../gfx/helpers/ReversedDepthHelpers';
 import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 
 export function textureToCanvas(texture: BinTex.Texture): Viewer.Texture {
     const canvas = document.createElement("canvas");
@@ -345,18 +346,16 @@ export class MapData {
         const height = texture.clipBottom - texture.clipTop + 1;
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, width, height, 1));
         device.setResourceName(gfxTexture, texture.name());
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, [texture.pixels()]);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, [texture.pixels()]);
         return gfxTexture;
     }
 
     private translateTextureFromAtlas(device: GfxDevice, textureAtlas: BinTex.TextureAtlas) {
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, textureAtlas.width, textureAtlas.height, 1));
         // device.setResourceName(gfxTexture, texture.name());
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, [assertExists(textureAtlas.pixels)]);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, [assertExists(textureAtlas.pixels)]);
         return gfxTexture;
     }
 
@@ -534,17 +533,15 @@ export class SceneRenderer {
 }
 
 export class KingdomHeartsRenderer implements Viewer.SceneGfx {
-    private renderInstManager = new GfxRenderInstManager();
-    private renderTarget = new BasicRenderTarget();
-    private uniformBuffer: GfxRenderDynamicUniformBuffer;
+    private renderHelper: GfxRenderHelper;
     private sceneRenderers: SceneRenderer[] = [];
 
     private mapData: MapData;
 
     constructor(device: GfxDevice, public textureHolder: TextureHolder<any>, bin: Bin.BIN) {
-        this.mapData = new MapData(device, bin);
+        this.renderHelper = new GfxRenderHelper(device);
 
-        this.uniformBuffer = new GfxRenderDynamicUniformBuffer(device);
+        this.mapData = new MapData(device, bin);
 
         const mapSceneRenderer = new SceneRenderer(device, this.mapData, this.mapData.mapDrawCalls, /*isSkybox=*/false);
         this.sceneRenderers.push(mapSceneRenderer);
@@ -576,39 +573,52 @@ export class KingdomHeartsRenderer implements Viewer.SceneGfx {
         return [renderHacksPanel, layersPanel];
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
-        const template = this.renderInstManager.pushTemplateRenderInst();
-        template.setUniformBuffer(this.uniformBuffer);
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
+        this.renderHelper.pushTemplateRenderInst();
+        const renderInstManager = this.renderHelper.renderInstManager;
         for (let i = 0; i < this.sceneRenderers.length; i++)
-            this.sceneRenderers[i].prepareToRender(device, this.renderInstManager, viewerInput);
-        this.renderInstManager.popTemplateRenderInst();
+            this.sceneRenderers[i].prepareToRender(device, renderInstManager, viewerInput);
+        renderInstManager.popTemplateRenderInst();
 
-        this.uniformBuffer.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        // Create render pass for skybox.
-        const skyboxPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, opaqueBlackFullClearRenderPassDescriptor);
-        executeOnPass(this.renderInstManager, device, skyboxPassRenderer, RenderPass.SKYBOX);
-        device.submitPass(skyboxPassRenderer);
-        // Create main render pass.
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor);
-        executeOnPass(this.renderInstManager, device, passRenderer, RenderPass.MAIN);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
 
-        this.renderInstManager.resetRenderInsts();
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, RenderPass.SKYBOX);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, RenderPass.MAIN);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        return passRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice): void {
-        this.renderInstManager.destroy(device);
-        this.renderTarget.destroy(device);
-        this.uniformBuffer.destroy(device);
+        this.renderHelper.destroy(device);
         this.textureHolder.destroy(device);
         this.mapData.destroy(device);
     }

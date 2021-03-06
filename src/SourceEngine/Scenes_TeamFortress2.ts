@@ -48,11 +48,25 @@ const id = 'TeamFortress2';
 const name = 'Team Fortress 2';
 const sceneDescs = [
     new TeamFortress2SceneDesc('background01'),
+    new TeamFortress2SceneDesc('cp_badlands'),
+    new TeamFortress2SceneDesc('cp_foundry'),
     new TeamFortress2SceneDesc('cp_dustbowl'),
+    new TeamFortress2SceneDesc('cp_gorge'),
+    new TeamFortress2SceneDesc('cp_sunshine'),
     new TeamFortress2SceneDesc('ctf_2fort'),
+    new TeamFortress2SceneDesc('ctf_gorge'),
+    new TeamFortress2SceneDesc('ctf_turbine'),
+    new TeamFortress2SceneDesc('koth_harvest_final'),
+    new TeamFortress2SceneDesc('koth_highpass'),
+    new TeamFortress2SceneDesc('koth_king'),
+    new TeamFortress2SceneDesc('koth_nucleus'),
+    new TeamFortress2SceneDesc('koth_sawmill'),
+    new TeamFortress2SceneDesc('koth_suijin'),
+    new TeamFortress2SceneDesc('koth_viaduct'),
     new TeamFortress2SceneDesc('pl_goldrush'),
     new TeamFortress2SceneDesc('pl_badwater'),
     new TeamFortress2SceneDesc('pl_barnblitz'),
+    new TeamFortress2SceneDesc('pl_borneo'),
     new TeamFortress2SceneDesc('pl_frontier_final'),
     new TeamFortress2SceneDesc('pl_thundermountain'),
     new TeamFortress2SceneDesc('pl_upward'),
@@ -61,4 +75,4 @@ const sceneDescs = [
     new GarrysModSceneDesc('gm_construct'),
 ];
 
-export const sceneGroup: SceneGroup = { id, name, sceneDescs, hidden: true };
+export const sceneGroup: SceneGroup = { id, name, sceneDescs };

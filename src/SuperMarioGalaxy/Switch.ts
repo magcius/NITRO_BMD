@@ -1,6 +1,6 @@
 
 import { NameObj, MovementType } from "./NameObj";
-import { SceneObjHolder, SceneObj } from "./Main";
+import { SceneObjHolder, SceneObj, getObjectName } from "./Main";
 import BitMap from "../BitMap";
 import { JMapInfoIter } from "./JMapInfo";
 import { assertExists, fallback } from "../util";
@@ -249,6 +249,7 @@ class SwitchWatcher {
     public listenerAppear: SwitchEventListener | null = null;
 
     constructor(public switchCtrl: StageSwitchCtrl) {
+        assertExists(switchCtrl);
     }
 
     private checkSwitch(sceneObjHolder: SceneObjHolder, listener: SwitchEventListener, bit: number, isOn: boolean): void {
@@ -397,7 +398,7 @@ export class SwitchSynchronizer extends NameObj {
     private reverse: boolean = false;
 
     constructor(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter) {
-        super(sceneObjHolder, name);
+        super(sceneObjHolder, getObjectName(infoIter));
         connectToSceneMapObjMovement(sceneObjHolder, this);
         this.switchCtrl = createStageSwitchCtrl(sceneObjHolder, infoIter);
         this.reverse = true;

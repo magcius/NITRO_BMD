@@ -8,7 +8,7 @@ import { mat4, vec3 } from "gl-matrix";
 import { fillMatrix4x3, fillColor, fillMatrix4x2 } from "../gfx/helpers/UniformBufferHelpers";
 import { TextureMapping } from "../TextureHolder";
 import { nArray, assert } from "../util";
-import { GfxRenderInstManager, GfxRendererLayer, setSortKeyDepth, makeSortKey } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRendererLayer, setSortKeyDepth, makeSortKey } from "../gfx/render/GfxRenderInstManager";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { reverseDepthForCompareMode } from "../gfx/helpers/ReversedDepthHelpers";
 import { GSAlphaCompareMode, GSAlphaFailMode, GSTextureFunction, GSDepthCompareMode, GSTextureFilter, GSPixelStorageFormat, psmToString } from "../Common/PS2/GS";
@@ -377,9 +377,8 @@ class BINTextureData {
             if (pixels !== 'framebuffer') {
                 const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, 1));
                 device.setResourceName(gfxTexture, texture.name);
-                const hostAccessPass = device.createHostAccessPass();
-                hostAccessPass.uploadTextureData(gfxTexture, 0, [pixels]);
-                device.submitPass(hostAccessPass);
+
+                device.uploadTextureData(gfxTexture, 0, [pixels]);
                 this.gfxTexture[i] = gfxTexture;
     
                 this.viewerTexture[i] = textureToCanvas(texture, `${texture.name}/${i}`, pixels);

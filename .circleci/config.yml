@@ -7,7 +7,7 @@ jobs:
         - master
 
     docker:
-      - image: circleci/node:10.16.3
+      - image: cimg/rust:1.50-node
         auth:
           username: jasperrlz
           password: $DOCKERHUB_PASSWORD
@@ -21,11 +21,16 @@ jobs:
 
       - restore_cache:
           keys:
-            - v1-dependencies-{{ checksum "package.json" }}
+            - v3-dependencies-{{ checksum "package.json" }}
             # fallback to using the latest cache if no exact match is found
-            - v1-dependencies-
+            - v3-dependencies-
 
       - run: yarn install
+
+      # wasm-pack is amazingly ridiculous and puts a binary in .config/, which
+      # won't get cached even when node_modules does. Force it to reinstall with
+      # an 'upgrade'.
+      - run: yarn upgrade wasm-pack
 
       - run: yarn run build
 
@@ -33,7 +38,7 @@ jobs:
           paths:
             - node_modules
             - .cache
-          key: v1-dependencies-{{ checksum "package.json" }}
+          key: v3-dependencies-{{ checksum "package.json" }}
 
       - add_ssh_keys:
           fingerprints:

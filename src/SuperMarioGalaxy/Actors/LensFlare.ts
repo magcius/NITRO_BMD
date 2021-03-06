@@ -9,12 +9,13 @@ import { JMapInfoIter, getJMapInfoArg0 } from "../JMapInfo";
 import { fallback } from "../../util";
 import { LiveActor, ZoneAndLayer, isDead, dynamicSpawnZoneAndLayer } from "../LiveActor";
 import { isFirstStep } from "../Spine";
-import { saturate, MathConstants, setMatrixTranslation, transformVec3Mat4w1 } from "../../MathHelpers";
+import { saturate, MathConstants, setMatrixTranslation, transformVec3Mat4w1, vec3SetAll } from "../../MathHelpers";
 import { divideByW } from "../../Camera";
 import { PeekZManager, PeekZResult } from "../../WindWaker/d_dlst_peekZ";
 import { GfxDevice, GfxCompareMode } from "../../gfx/platform/GfxPlatform";
-import { DepthStencilAttachment } from "../../gfx/helpers/RenderTargetHelpers";
 import { compareDepthValues } from "../../gfx/helpers/ReversedDepthHelpers";
+import { GfxrGraphBuilder } from "../../gfx/render/GfxRenderGraph";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 
 function calcRotateY(x: number, y: number): number {
     return (MathConstants.TAU / 4) + Math.atan2(-y, x);
@@ -23,12 +24,12 @@ function calcRotateY(x: number, y: number): number {
 export class DrawSyncManager {
     public peekZ = new PeekZManager();
 
-    public beginFrame(device: GfxDevice, depthStencilAttachment: DepthStencilAttachment): void {
-        this.peekZ.setParameters(device, depthStencilAttachment.width!, depthStencilAttachment.height!);
+    public beginFrame(device: GfxDevice): void {
+        this.peekZ.beginFrame(device);
     }
 
-    public endFrame(device: GfxDevice, depthStencilAttachment: DepthStencilAttachment): void {
-        this.peekZ.submitFrame(device, depthStencilAttachment.gfxAttachment!);
+    public endFrame(device: GfxDevice, renderInstManager: GfxRenderInstManager, builder: GfxrGraphBuilder, depthTargetID: number): void {
+        this.peekZ.pushPasses(device, renderInstManager, builder, depthTargetID);
         this.peekZ.peekData(device);
     }
 
@@ -320,7 +321,7 @@ class LensFlareRing extends LensFlareModel {
     constructor(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder) {
         super(zoneAndLayer, sceneObjHolder, 'LensFlare');
         this.fadeStep = 0.05;
-        vec3.set(this.scale, 0.135, 0.135, 0.135);
+        vec3SetAll(this.scale, 0.135);
     }
 
     protected appearAnim(sceneObjHolder: SceneObjHolder): void {
@@ -496,7 +497,7 @@ export class LensFlareDirector extends NameObj {
 }
 
 export function createLensFlareArea(zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): NameObj {
-    return new LensFlareArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.CubeGround);
+    return new LensFlareArea(zoneAndLayer, sceneObjHolder, infoIter, AreaFormType.BaseOriginCube);
 }
 
 export function requestArchivesLensFlareArea(sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): void {

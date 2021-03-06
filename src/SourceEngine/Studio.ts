@@ -9,9 +9,10 @@ import { SourceFileSystem, SourceRenderContext } from "./Main";
 import { AABB } from "../Geometry";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
-import { MaterialProgramBase, BaseMaterial, EntityMaterialParameters, StaticLightingMode } from "./Materials";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
-import { mat4 } from "gl-matrix";
+import { MaterialProgramBase, BaseMaterial, EntityMaterialParameters, StaticLightingMode, SkinningMode } from "./Materials";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
+import { mat4, ReadonlyMat4, ReadonlyVec3, vec3 } from "gl-matrix";
+import { MathConstants } from "../MathHelpers";
 
 // Encompasses the MDL, VVD & VTX formats.
 
@@ -33,12 +34,57 @@ const enum OptimizeStripFlags {
     IS_TRISTRIP                    = 0x02,
 }
 
+function computeModelMatrixPosRotInternal(dst: mat4, pitch: number, yaw: number, roll: number, pos: ReadonlyVec3): void {
+    // Pitch, Yaw, Roll
+    // https://github.com/ValveSoftware/source-sdk-2013/blob/master/sp/src/mathlib/mathlib_base.cpp#L1218-L1233
+
+    const sinP = Math.sin(pitch), cosP = Math.cos(pitch);
+    const sinY = Math.sin(yaw),   cosY = Math.cos(yaw);
+    const sinR = Math.sin(roll),  cosR = Math.cos(roll);
+
+    dst[0] =  (cosP * cosY);
+    dst[1] =  (cosP * sinY);
+    dst[2] =  (-sinP);
+    dst[3] =  0.0;
+
+    dst[4] =  (sinP * sinR * cosY - cosR * sinY);
+    dst[5] =  (sinP * sinR * sinY + cosR * cosY);
+    dst[6] =  (sinR * cosP);
+    dst[7] =  0.0;
+
+    dst[8] =  (sinP * cosR * cosY + sinR * sinY);
+    dst[9] =  (sinP * cosR * sinY - sinR * cosY);
+    dst[10] = (cosR * cosP);
+    dst[11] = 0.0;
+
+    dst[12] = pos[0];
+    dst[13] = pos[1];
+    dst[14] = pos[2];
+    dst[15] = 1.0;
+}
+
+export function computeModelMatrixPosQAngle(dst: mat4, pos: ReadonlyVec3, qangle: ReadonlyVec3): void {
+    // QAngle is in degrees.
+    const pitch = qangle[0] * MathConstants.DEG_TO_RAD;
+    const yaw =   qangle[1] * MathConstants.DEG_TO_RAD;
+    const roll =  qangle[2] * MathConstants.DEG_TO_RAD;
+    computeModelMatrixPosRotInternal(dst, pitch, yaw, roll, pos);
+}
+
+function computeModelMatrixPosRadianEuler(dst: mat4, pos: ReadonlyVec3, radianEuler: ReadonlyVec3): void {
+    // Convert Euler angles to PYR.
+    // https://github.com/ValveSoftware/source-sdk-2013/blob/master/sp/src/mathlib/mathlib_base.cpp#L1182
+    const pitch = radianEuler[1];
+    const yaw =   radianEuler[2];
+    const roll =  radianEuler[0];
+    computeModelMatrixPosRotInternal(dst, pitch, yaw, roll, pos);
+}
+
 class StudioModelStripData {
-    constructor(public firstIndex: number, public indexCount: number) {
+    constructor(public firstIndex: number, public indexCount: number, public hardwareBoneTable: number[]) {
     }
 }
 
-// TODO(jstpierre): Coalesce all buffers for a studio model?
 class StudioModelStripGroupData {
     public stripData: StudioModelStripData[] = [];
 
@@ -46,6 +92,7 @@ class StudioModelStripGroupData {
     }
 }
 
+// TODO(jstpierre): Coalesce all buffers for a studio model?
 class StudioModelMeshData {
     public vertexBuffer: GfxBuffer;
     public indexBuffer: GfxBuffer;
@@ -55,18 +102,21 @@ class StudioModelMeshData {
 
     public stripGroupData: StudioModelStripGroupData[] = [];
 
-    constructor(device: GfxDevice, cache: GfxRenderCache, public materialName: string, vertexData: ArrayBuffer, indexData: ArrayBuffer) {
+    constructor(device: GfxDevice, cache: GfxRenderCache, public materialNames: string[], vertexData: ArrayBufferLike, indexData: ArrayBufferLike) {
         this.vertexBuffer = makeStaticDataBuffer(device, GfxBufferUsage.VERTEX, vertexData);
         this.indexBuffer = makeStaticDataBuffer(device, GfxBufferUsage.INDEX, indexData);
 
+        // TODO(jstpierre): Lighten up vertex buffers by only allocating bone weights / IDs if necessary?
         const vertexAttributeDescriptors: GfxVertexAttributeDescriptor[] = [
-            { location: MaterialProgramBase.a_Position, bufferIndex: 0, bufferByteOffset: 0*0x04, format: GfxFormat.F32_RGB, },
-            { location: MaterialProgramBase.a_Normal,   bufferIndex: 0, bufferByteOffset: 3*0x04, format: GfxFormat.F32_RGBA, },
-            { location: MaterialProgramBase.a_TangentS, bufferIndex: 0, bufferByteOffset: 7*0x04, format: GfxFormat.F32_RGBA, },
-            { location: MaterialProgramBase.a_TexCoord, bufferIndex: 0, bufferByteOffset: 11*0x04, format: GfxFormat.F32_RG, },
+            { location: MaterialProgramBase.a_Position,    bufferIndex: 0, bufferByteOffset: 0*0x04, format: GfxFormat.F32_RGB, },
+            { location: MaterialProgramBase.a_Normal,      bufferIndex: 0, bufferByteOffset: 3*0x04, format: GfxFormat.F32_RGBA, },
+            { location: MaterialProgramBase.a_TangentS,    bufferIndex: 0, bufferByteOffset: 7*0x04, format: GfxFormat.F32_RGBA, },
+            { location: MaterialProgramBase.a_TexCoord,    bufferIndex: 0, bufferByteOffset: 11*0x04, format: GfxFormat.F32_RG, },
+            { location: MaterialProgramBase.a_BoneWeights, bufferIndex: 0, bufferByteOffset: 13*0x04, format: GfxFormat.F32_RGBA, },
+            { location: MaterialProgramBase.a_BoneIDs,     bufferIndex: 0, bufferByteOffset: 17*0x04, format: GfxFormat.F32_RGBA, },
         ];
         const vertexBufferDescriptors: GfxInputLayoutBufferDescriptor[] = [
-            { byteStride: (3+4+4+2)*0x04, frequency: GfxVertexBufferFrequency.PER_VERTEX, },
+            { byteStride: (3+4+4+2+4+4)*0x04, frequency: GfxVertexBufferFrequency.PER_VERTEX, },
         ];
         const indexBufferFormat = GfxFormat.U16_R;
         this.inputLayoutWithoutColorMesh = cache.createInputLayout(device, { vertexAttributeDescriptors, vertexBufferDescriptors, indexBufferFormat });
@@ -123,6 +173,9 @@ class StudioModelSubmodelData {
 
 class StudioModelBodyPartData {
     public submodelData: StudioModelSubmodelData[] = [];
+
+    constructor(private name: string) {
+    }
 
     public destroy(device: GfxDevice): void {
         for (let i = 0; i < this.submodelData.length; i++)
@@ -189,13 +242,31 @@ class ResizableArrayBuffer {
 }
 */
 
+class Bone {
+    public pos = vec3.create();
+    public rot = vec3.create();
+    public poseToBone = mat4.create();
+
+    constructor(private name: string, public parent: number) {
+    }
+}
+
 export class StudioModelData {
+    private name: string;
+
     public bodyPartData: StudioModelBodyPartData[] = [];
     public checksum: number;
     public bbox: AABB;
+    public bones: Bone[] = [];
 
     constructor(renderContext: SourceRenderContext, mdlBuffer: ArrayBufferSlice, vvdBuffer: ArrayBufferSlice, vtxBuffer: ArrayBufferSlice) {
         const mdlView = mdlBuffer.createDataView();
+
+        // We have three separate files of data (MDL, VVD, VTX) to chew through.
+        //
+        // MDL = Studio Model Header, contains skeleton, most aux data, animations, etc.
+        // VVD = Valve Vertex Data, contains actual vertex data.
+        // VTX = Optimized Model, contains per-LOD information (index buffer, optimized trilist information & material replacement).
 
         // Parse MDL header
         assert(readString(mdlBuffer, 0x00, 0x04) === 'IDST');
@@ -206,7 +277,7 @@ export class StudioModelData {
 
         this.checksum = mdlView.getUint32(0x08, true);
 
-        const name = readString(mdlBuffer, 0x0C, 0x40, true);
+        this.name = readString(mdlBuffer, 0x0C, 0x40, true);
         const length = mdlView.getUint32(0x4C, true);
 
         const eyePositionX = mdlView.getFloat32(0x50, true);
@@ -234,11 +305,85 @@ export class StudioModelData {
 
         const flags: StudioModelFlags = mdlView.getUint32(0x98, true);
         const isStaticProp = !!(flags & StudioModelFlags.STATIC_PROP);
-        // We only support static props right now.
-        assert(isStaticProp);
 
         const numbones = mdlView.getUint32(0x9C, true);
         const boneindex = mdlView.getUint32(0xA0, true);
+
+        let boneidx = boneindex;
+        for (let i = 0; i < numbones; i++) {
+            const szname = readString(mdlBuffer, boneidx + mdlView.getUint32(boneidx + 0x00, true));
+            const parent = mdlView.getInt32(boneidx + 0x04, true);
+            assert(parent < i);
+            const bone = new Bone(szname, parent);
+
+            const bonecontroller = [
+                mdlView.getInt32(boneidx + 0x08, true),
+                mdlView.getInt32(boneidx + 0x0C, true),
+                mdlView.getInt32(boneidx + 0x10, true),
+                mdlView.getInt32(boneidx + 0x14, true),
+                mdlView.getInt32(boneidx + 0x18, true),
+                mdlView.getInt32(boneidx + 0x1C, true),
+            ];
+
+            bone.pos[0] = mdlView.getFloat32(boneidx + 0x20, true);
+            bone.pos[1] = mdlView.getFloat32(boneidx + 0x24, true);
+            bone.pos[2] = mdlView.getFloat32(boneidx + 0x28, true);
+            const quatX = mdlView.getFloat32(boneidx + 0x2C, true);
+            const quatY = mdlView.getFloat32(boneidx + 0x30, true);
+            const quatZ = mdlView.getFloat32(boneidx + 0x34, true);
+            const quatW = mdlView.getFloat32(boneidx + 0x38, true);
+            bone.rot[0] = mdlView.getFloat32(boneidx + 0x3C, true);
+            bone.rot[1] = mdlView.getFloat32(boneidx + 0x40, true);
+            bone.rot[2] = mdlView.getFloat32(boneidx + 0x44, true);
+
+            if (i === 0) {
+                // XXX(jstpierre): Empirically, we seem to need some extra "oomph" on the root bone's Z rotation.
+                // I have no clue why this is necessary.
+                bone.rot[2] += MathConstants.TAU / 4;
+            }
+
+            const posScaleX = mdlView.getFloat32(boneidx + 0x48, true);
+            const posScaleY = mdlView.getFloat32(boneidx + 0x4C, true);
+            const posScaleZ = mdlView.getFloat32(boneidx + 0x50, true);
+            const rotScaleX = mdlView.getFloat32(boneidx + 0x54, true);
+            const rotScaleY = mdlView.getFloat32(boneidx + 0x58, true);
+            const rotScaleZ = mdlView.getFloat32(boneidx + 0x5C, true);
+
+            const poseToBone00 = mdlView.getFloat32(boneidx + 0x60, true);
+            const poseToBone01 = mdlView.getFloat32(boneidx + 0x64, true);
+            const poseToBone02 = mdlView.getFloat32(boneidx + 0x68, true);
+            const poseToBone03 = mdlView.getFloat32(boneidx + 0x6C, true);
+            const poseToBone10 = mdlView.getFloat32(boneidx + 0x70, true);
+            const poseToBone11 = mdlView.getFloat32(boneidx + 0x74, true);
+            const poseToBone12 = mdlView.getFloat32(boneidx + 0x78, true);
+            const poseToBone13 = mdlView.getFloat32(boneidx + 0x7C, true);
+            const poseToBone20 = mdlView.getFloat32(boneidx + 0x80, true);
+            const poseToBone21 = mdlView.getFloat32(boneidx + 0x84, true);
+            const poseToBone22 = mdlView.getFloat32(boneidx + 0x88, true);
+            const poseToBone23 = mdlView.getFloat32(boneidx + 0x8C, true);
+            mat4.set(bone.poseToBone,
+                poseToBone00, poseToBone10, poseToBone20, 0,
+                poseToBone01, poseToBone11, poseToBone21, 0,
+                poseToBone02, poseToBone12, poseToBone22, 0,
+                poseToBone03, poseToBone13, poseToBone23, 1,
+            );
+
+            const alignmentX = mdlView.getFloat32(boneidx + 0x90, true);
+            const alignmentY = mdlView.getFloat32(boneidx + 0x94, true);
+            const alignmentZ = mdlView.getFloat32(boneidx + 0x98, true);
+            const alignmentW = mdlView.getFloat32(boneidx + 0x9C, true);
+
+            const proctype = mdlView.getUint32(boneidx + 0xA4, true);
+            const procindex = mdlView.getUint32(boneidx + 0xA8, true);
+            const physicsbone = mdlView.getUint32(boneidx + 0xAC, true);
+            const surfacepropidx = mdlView.getUint32(boneidx + 0xB0, true);
+            const contents = mdlView.getUint32(boneidx + 0xB4, true);
+
+            // int unused[8];
+
+            this.bones.push(bone);
+            boneidx += 0xD8;
+        }
 
         const numbonecontrollers = mdlView.getUint32(0xA4, true);
         const bonecontrollerindex = mdlView.getUint32(0xA8, true);
@@ -253,6 +398,7 @@ export class StudioModelData {
 
         const numlocalseqs = mdlView.getUint32(0xBC, true);
         const localseqindex = mdlView.getUint32(0xC0, true);
+
         const activitylistversion = mdlView.getUint32(0xC4, true);
         const eventsindexed = mdlView.getUint32(0xC8, true);
 
@@ -274,6 +420,7 @@ export class StudioModelData {
         const numskinref = mdlView.getUint32(0xDC, true);
         const numskinfamilies = mdlView.getUint32(0xE0, true);
         const skinindex = mdlView.getUint32(0xE4, true);
+        const skinArray = mdlBuffer.createTypedArray(Uint16Array, skinindex, numskinref * numskinfamilies);
 
         const numbodyparts = mdlView.getUint32(0xE8, true);
         const bodypartindex = mdlView.getUint32(0xEC, true);
@@ -428,29 +575,24 @@ export class StudioModelData {
         let vtxMaterialReplacementListIdx = vtxMaterialReplacementListOffset;
         for (let i = 0; i < vtxNumLODs; i++) {
             const numReplacements = vtxView.getUint32(vtxMaterialReplacementListIdx + 0x00, true);
-            const replacementOffset = vtxView.getUint32(vtxMaterialReplacementListIdx + 0x04, true);
+            const replacementOffset = vtxView.getInt32(vtxMaterialReplacementListIdx + 0x04, true);
 
             const materialNames: string[] = baseMaterialNames.slice();
             let replacementIdx = vtxMaterialReplacementListIdx + replacementOffset;
             for (let i = 0; i < numReplacements; i++) {
                 const materialID = vtxView.getUint16(replacementIdx + 0x00, true);
                 assert(materialID < materialNames.length);
-                const nameOffset = replacementIdx + vtxView.getUint32(replacementIdx + 0x04, true);
+                const nameOffset = replacementIdx + vtxView.getInt32(replacementIdx + 0x02, true);
                 const replacementName = readString(vtxBuffer, nameOffset);
                 materialNames[materialID] = assertExists(renderContext.filesystem.searchPath(materialSearchDirs, replacementName, '.vmt'));
+                replacementIdx += 0x06;
             }
 
             lodMaterialNames.push(materialNames);
             vtxMaterialReplacementListIdx += 0x08;
         }
 
-        // We have three separate files of data (MDL, VVD, VTX) to chew through.
-        //
-        // MDL = Studio Model Header, contains skeleton, most aux data, animations, etc.
-        // VVD = Valve Vertex Data, contains actual vertex data.
-        // VTX = Optimized Model, contains per-LOD information (index buffer, optimized trilist information & material replacement).
-
-        // The hierarchy of a model is Body Part -> Submodel -> Submodel LOD -> Mesh -> Mesh Group -> Strip
+        // The hierarchy of a model is Body Part -> Submodel -> Submodel LOD -> Mesh -> Strip Group -> Strip
         // Note that "strips" might not actually be tristrips. They appear to be trilists in modern models.
 
         let mdlBodyPartIdx = bodypartindex;
@@ -463,9 +605,9 @@ export class StudioModelData {
 
             const vtxNumModels = vtxView.getUint32(vtxBodyPartIdx + 0x00, true);
             assert(mdlNumModels === vtxNumModels);
-            const vtxModelOffs = vtxView.getUint32(vtxBodyPartOffset + 0x04, true);
+            const vtxModelOffs = vtxView.getUint32(vtxBodyPartIdx + 0x04, true);
 
-            const bodyPartData = new StudioModelBodyPartData();
+            const bodyPartData = new StudioModelBodyPartData(bodyPartName);
             this.bodyPartData.push(bodyPartData);
 
             let mdlSubmodelIdx = mdlBodyPartIdx + mdlModelindex;
@@ -495,12 +637,12 @@ export class StudioModelData {
 
                 const vtxSubmodelNumLODs = vtxView.getUint32(vtxSubmodelIdx + 0x00, true);
                 assert(vtxSubmodelNumLODs === vtxNumLODs);
-                const vtxSubmodelLODOffset = vtxSubmodelIdx + vtxView.getUint32(vtxSubmodelIdx + 0x04, true);
+                const vtxSubmodelLODOffset = vtxView.getUint32(vtxSubmodelIdx + 0x04, true);
 
                 const submodelData = new StudioModelSubmodelData(mdlSubmodelName);
                 bodyPartData.submodelData.push(submodelData);
 
-                let vtxLODIdx = vtxSubmodelLODOffset;
+                let vtxLODIdx = vtxSubmodelIdx + vtxSubmodelLODOffset;
                 for (let lod = 0; lod < vtxSubmodelNumLODs; lod++) {
                     const vtxNumMeshes = vtxView.getUint32(vtxLODIdx + 0x00, true);
                     assert(vtxNumMeshes === mdlSubmodelNumMeshes);
@@ -513,9 +655,17 @@ export class StudioModelData {
                     let vtxMeshIdx = vtxLODIdx + vtxMeshOffset;
                     for (let m = 0; m < mdlSubmodelNumMeshes; m++) {
                         // MDL data is not LOD-specific, we reparse this for each LOD.
-                        const material = mdlView.getUint32(mdlMeshIdx + 0x00, true);
-                        const modelindex = mdlView.getUint32(mdlMeshIdx + 0x04, true);
-                        const materialName = lodMaterialNames[lod][material];
+
+                        const skinrefIndex = mdlView.getUint32(mdlMeshIdx + 0x00, true);
+
+                        // Parse out the material names for each skin family.
+                        const materialNames: string[] = [];
+                        for (let i = 0; i < numskinfamilies; i++) {
+                            const materialNameIndex = skinArray[i * numskinref + skinrefIndex];
+                            materialNames.push(lodMaterialNames[lod][materialNameIndex]);
+                        }
+
+                        const modelindex = mdlView.getInt32(mdlMeshIdx + 0x04, true);
 
                         const mdlMeshNumvertices = mdlView.getUint32(mdlMeshIdx + 0x08, true);
                         const mdlMeshVertexoffset = mdlView.getUint32(mdlMeshIdx + 0x0C, true);
@@ -524,7 +674,7 @@ export class StudioModelData {
                         const flexindex = mdlView.getUint32(mdlMeshIdx + 0x14, true);
 
                         const materialtype = mdlView.getUint32(mdlMeshIdx + 0x18, true);
-                        assert(materialtype === 0); // not eyeballs
+                        // assert(materialtype === 0); // not eyeballs
                         const materialparam = mdlView.getUint32(mdlMeshIdx + 0x1C, true);
 
                         const meshid = mdlView.getUint32(mdlMeshIdx + 0x20, true);
@@ -541,22 +691,25 @@ export class StudioModelData {
                         // We load the DX90 VTX files, which always have hw skin enabled, so we should see at most two
                         // flex groups.
                         const vtxNumStripGroups = vtxView.getUint32(vtxMeshIdx + 0x00, true);
-                        assert(vtxNumStripGroups === 1 || vtxNumStripGroups === 2);
+
+                        // TODO(jstpierre): It seems some non-hw-skin groups are showing up in DX90 files in HL2?
+                        // assert(vtxNumStripGroups === 1 || vtxNumStripGroups === 2);
+
                         const vtxStripGroupHeaderOffset = vtxView.getUint32(vtxMeshIdx + 0x04, true);
                         const vtxMeshFlags = vtxView.getUint8(vtxMeshIdx + 0x08);
 
                         let meshNumVertices = 0;
                         let meshNumIndices = 0;
                         let vtxStripGroupIdx = vtxMeshIdx + vtxStripGroupHeaderOffset;
-                        for (let g = 0; g < vtxNumStripGroups; g++) {
+                        for (let g = 0; g < vtxNumStripGroups; g++, vtxStripGroupIdx += 0x19) {
                             const numVerts = vtxView.getUint32(vtxStripGroupIdx + 0x00, true);
                             const numIndices = vtxView.getUint32(vtxStripGroupIdx + 0x08, true);
                             meshNumVertices += numVerts;
                             meshNumIndices += numIndices;
                         }
 
-                        // 3 pos, 4 normal, 4 tangent, 2 uv
-                        const vertexSize = (3+4+4+2);
+                        // 3 pos, 4 normal, 4 tangent, 2 uv, 4 bone weight, 4 bone id
+                        const vertexSize = (3+4+4+2+4+4);
                         const meshVtxData = new Float32Array(meshNumVertices * vertexSize);
                         const meshIdxData = new Uint16Array(meshNumIndices);
 
@@ -568,7 +721,7 @@ export class StudioModelData {
                         const stripGroupDatas: StudioModelStripGroupData[] = [];
 
                         vtxStripGroupIdx = vtxMeshIdx + vtxStripGroupHeaderOffset;
-                        for (let g = 0; g < vtxNumStripGroups; g++) {
+                        for (let g = 0; g < vtxNumStripGroups; g++, vtxStripGroupIdx += 0x19) {
                             const numVerts = vtxView.getUint32(vtxStripGroupIdx + 0x00, true);
                             const vertOffset = vtxView.getUint32(vtxStripGroupIdx + 0x04, true);
 
@@ -579,23 +732,29 @@ export class StudioModelData {
                             const stripOffset = vtxView.getUint32(vtxStripGroupIdx + 0x14, true);
 
                             const stripGroupFlags: OptimizeStripGroupFlags = vtxView.getUint8(vtxStripGroupIdx + 0x18);
+
                             // DX90 VTX models should always have hw skin enabled.
-                            assert(!!(stripGroupFlags & OptimizeStripGroupFlags.IS_HWSKINNED));
+                            // TODO(jstpierre): Figure out why this is breaking on HL2's "female_07" model. Eyeballs?
+                            if (!(stripGroupFlags & OptimizeStripGroupFlags.IS_HWSKINNED))
+                                continue;
 
                             // Build the vertex data for our strip group.
                             let vertIdx = vtxStripGroupIdx + vertOffset;
                             for (let v = 0; v < numVerts; v++) {
                                 // VTX Bone weight data.
-                                const vtxBoneWeightIdx0 = vtxView.getUint8(vertIdx + 0x00);
-                                const vtxBoneWeightIdx1 = vtxView.getUint8(vertIdx + 0x01);
-                                const vtxBoneWeightIdx2 = vtxView.getUint8(vertIdx + 0x02);
+                                const vtxBoneWeightIdx = [
+                                    vtxView.getUint8(vertIdx + 0x00),
+                                    vtxView.getUint8(vertIdx + 0x01),
+                                    vtxView.getUint8(vertIdx + 0x02),
+                                ];
                                 const vtxNumBones = vtxView.getUint8(vertIdx + 0x03);
-                                assert(vtxNumBones === 0);
 
                                 const vtxOrigMeshVertID = vtxView.getUint16(vertIdx + 0x04, true);
-                                const vtxBoneID0 = vtxView.getUint8(vertIdx + 0x06);
-                                const vtxBoneID1 = vtxView.getUint8(vertIdx + 0x07);
-                                const vtxBoneID2 = vtxView.getUint8(vertIdx + 0x08);
+                                const vtxBoneID = [
+                                    vtxView.getUint8(vertIdx + 0x06),
+                                    vtxView.getUint8(vertIdx + 0x07),
+                                    vtxView.getUint8(vertIdx + 0x08),
+                                ];
 
                                 // Pull out VVD vertex data.
                                 const modelVertIndex = (mdlMeshVertexoffset + vtxOrigMeshVertID);
@@ -603,13 +762,30 @@ export class StudioModelData {
                                 const vvdVertexOffs = vvdSubmodelVertexDataOffs + 0x30 * vvdVertIndex;
                                 const vvdTangentOffs = vvdSubmodelTangentDataOffs + 0x10 * vvdVertIndex;
 
-                                const vvdBoneWeight0 = vvdView.getFloat32(vvdVertexOffs + 0x00, true);
-                                const vvdBoneWeight1 = vvdView.getFloat32(vvdVertexOffs + 0x04, true);
-                                const vvdBoneWeight2 = vvdView.getFloat32(vvdVertexOffs + 0x08, true);
-                                const vvdBoneIdx0 = vvdView.getUint8(vvdVertexOffs + 0x0C);
-                                const vvdBoneIdx1 = vvdView.getUint8(vvdVertexOffs + 0x0D);
-                                const vvdBoneIdx2 = vvdView.getUint8(vvdVertexOffs + 0x0E);
+                                const vvdBoneWeight = [
+                                    vvdView.getFloat32(vvdVertexOffs + 0x00, true),
+                                    vvdView.getFloat32(vvdVertexOffs + 0x04, true),
+                                    vvdView.getFloat32(vvdVertexOffs + 0x08, true),
+                                ];
+                                const vvdBoneIdx = [
+                                    vvdView.getUint8(vvdVertexOffs + 0x0C),
+                                    vvdView.getUint8(vvdVertexOffs + 0x0D),
+                                    vvdView.getUint8(vvdVertexOffs + 0x0E),
+                                ];
                                 const vvdNumBones = vvdView.getUint8(vvdVertexOffs + 0x0F);
+
+                                const boneWeights: number[] = [0, 0, 0, 0];
+
+                                let totalBoneWeight = 0.0;
+                                for (let i = 0; i < vtxNumBones; i++) {
+                                    const boneWeightIdx = vtxBoneWeightIdx[i];
+                                    boneWeights[i] = vvdBoneWeight[boneWeightIdx];
+                                    totalBoneWeight += boneWeights[i];
+                                }
+
+                                // Normalize.
+                                for (let i = 0; i < vtxNumBones; i++)
+                                    boneWeights[i] /= totalBoneWeight;
 
                                 const vvdPositionX = vvdView.getFloat32(vvdVertexOffs + 0x10, true);
                                 const vvdPositionY = vvdView.getFloat32(vvdVertexOffs + 0x14, true);
@@ -652,6 +828,18 @@ export class StudioModelData {
                                 meshVtxData[dataOffs++] = vvdTexCoordS;
                                 meshVtxData[dataOffs++] = vvdTexCoordT;
 
+                                // Bone weights
+                                meshVtxData[dataOffs++] = boneWeights[0];
+                                meshVtxData[dataOffs++] = boneWeights[1];
+                                meshVtxData[dataOffs++] = boneWeights[2];
+                                meshVtxData[dataOffs++] = boneWeights[3];
+
+                                // Bone IDs
+                                meshVtxData[dataOffs++] = vtxBoneID[0];
+                                meshVtxData[dataOffs++] = vtxBoneID[1];
+                                meshVtxData[dataOffs++] = vtxBoneID[2];
+                                meshVtxData[dataOffs++] = 0;
+
                                 vertIdx += 0x09;
                             }
 
@@ -669,42 +857,49 @@ export class StudioModelData {
                             // Note that as noted before, "tristrip" in modern models refers mostly to trilists, not tristrips.
                             // We can have multiple strips in a strip group if we have a bone change table between strips.
                             // For unskinned / static prop models without bones, we should always have one strip.
-                            // TODO(jstpierre): Handle skinned models.
+
+                            // Each strip in a strip group can change the bones, relative to the previous one.
+                            const hardwareBoneTable: number[] = [];
+
                             let vtxStripIdx = vtxStripGroupIdx + stripOffset;
-                            assert(numStrips === 1);
+                            // assert(numStrips === 1);
                             for (let s = 0; s < numStrips; s++) {
                                 const stripNumIndices = vtxView.getUint32(vtxStripIdx + 0x00, true);
                                 const stripIndexOffset = vtxView.getUint32(vtxStripIdx + 0x04, true);
-                                assert(stripNumIndices === numIndices);
-                                assert(stripIndexOffset === 0);
+                                // assert(stripNumIndices === numIndices);
+                                // assert(stripIndexOffset === 0);
 
                                 const stripNumVerts = vtxView.getUint32(vtxStripIdx + 0x08, true);
                                 const stripVertOffset = vtxView.getUint32(vtxStripIdx + 0x0C, true);
-                                assert(stripNumVerts === numVerts);
-                                assert(stripVertOffset === 0);
+                                // assert(stripNumVerts === numVerts);
+                                // assert(stripVertOffset === 0);
 
                                 const numBones = vtxView.getUint16(vtxStripIdx + 0x10, true);
-                                assert(numBones === 0);
 
                                 const stripFlags: OptimizeStripFlags = vtxView.getUint8(vtxStripIdx + 0x12);
                                 assert(stripFlags === OptimizeStripFlags.IS_TRILIST);
 
                                 const numBoneStateChanges = vtxView.getUint32(vtxStripIdx + 0x13, true);
                                 const boneStateChangeOffset = vtxView.getUint32(vtxStripIdx + 0x17, true);
-                                assert(numBoneStateChanges === 0);
+                                let boneStateChangeIdx = boneStateChangeOffset;
 
-                                stripGroupData.stripData.push(new StudioModelStripData(meshFirstIdx + stripIndexOffset, stripNumIndices));
+                                for (let i = 0; i < numBoneStateChanges; i++) {
+                                    const hardwareID = vtxView.getUint32(vtxStripIdx + boneStateChangeIdx + 0x00, true);
+                                    const boneID = vtxView.getUint32(vtxStripIdx + boneStateChangeIdx + 0x04, true);
+                                    hardwareBoneTable[hardwareID] = boneID;
+                                    boneStateChangeIdx += 0x08;
+                                }
 
-                                vtxStripIdx += 0x1C;
+                                stripGroupData.stripData.push(new StudioModelStripData(meshFirstIdx + stripIndexOffset, stripNumIndices, hardwareBoneTable.slice()));
+
+                                vtxStripIdx += 0x1B;
                             }
 
                             meshFirstIdx += numIndices;
-
-                            vtxStripGroupIdx += 0x1C;
                         }
 
                         const device = renderContext.device, cache = renderContext.cache;
-                        const meshData = new StudioModelMeshData(device, cache, materialName, meshVtxData.buffer, meshIdxData.buffer);
+                        const meshData = new StudioModelMeshData(device, cache, materialNames, meshVtxData.buffer, meshIdxData.buffer);
                         for (let i = 0; i < stripGroupDatas.length; i++)
                             meshData.stripGroupData.push(stripGroupDatas[i]);
                         lodData.meshData.push(meshData);
@@ -721,10 +916,16 @@ export class StudioModelData {
 
                 mdlSubmodelIdx += 0x94;
                 vtxSubmodelIdx += 0x08;
+
+                // TODO(jstpierre): Reading models with multiple submodels seems to break right now... not sure why.
+                break;
             }
 
             mdlBodyPartIdx += 0x10;
             vtxBodyPartIdx += 0x08;
+
+            // TODO(jstpierre): Reading models with multiple body parts seems to break right now... not sure why.
+            break;
         }
     }
 
@@ -863,9 +1064,11 @@ class StudioModelMeshInstance {
     private visible = true;
     private materialInstance: BaseMaterial | null = null;
     private inputStateWithColorMesh: GfxInputState | null = null;
+    private skinningMode: SkinningMode;
 
-    constructor(renderContext: SourceRenderContext, private meshData: StudioModelMeshData, entityParams: EntityMaterialParameters) {
-        this.bindMaterial(renderContext, entityParams);
+    constructor(renderContext: SourceRenderContext, private meshData: StudioModelMeshData, private entityParams: EntityMaterialParameters) {
+        this.bindMaterial(renderContext);
+        this.skinningMode = this.calcSkinningMode();
     }
 
     private syncMaterialInstanceStaticLightingMode(): void {
@@ -875,8 +1078,28 @@ class StudioModelMeshInstance {
         }
     }
 
-    private async bindMaterial(renderContext: SourceRenderContext, entityParams: EntityMaterialParameters): Promise<void> {
-        this.materialInstance = await renderContext.materialCache.createMaterialInstance(renderContext, this.meshData.materialName, entityParams);
+    private calcSkinningMode(): SkinningMode {
+        let maxNumBones = 0;
+
+        for (let i = 0; i < this.meshData.stripGroupData.length; i++) {
+            const stripGroupData = this.meshData.stripGroupData[i];
+            for (let j = 0; j < stripGroupData.stripData.length; j++) {
+                const stripData = stripGroupData.stripData[j];
+                maxNumBones = Math.max(stripData.hardwareBoneTable.length, maxNumBones);
+                if (maxNumBones > 1)
+                    return SkinningMode.Smooth;
+            }
+        }
+
+        if (maxNumBones === 1)
+            return SkinningMode.Rigid;
+
+        return SkinningMode.None;
+    }
+
+    private async bindMaterial(renderContext: SourceRenderContext, skin: number = 0): Promise<void> {
+        this.materialInstance = await renderContext.materialCache.createMaterialInstance(renderContext, this.meshData.materialNames[skin], this.entityParams);
+        this.materialInstance.setSkinningMode(this.skinningMode);
         this.syncMaterialInstanceStaticLightingMode();
     }
 
@@ -889,6 +1112,12 @@ class StudioModelMeshInstance {
         this.syncMaterialInstanceStaticLightingMode();
     }
 
+    public setSkin(renderContext: SourceRenderContext, skin: number): void {
+        if (skin >= this.meshData.materialNames.length)
+            skin = 0;
+        this.bindMaterial(renderContext, skin);
+    }
+
     public movement(renderContext: SourceRenderContext): void {
         if (!this.visible || this.materialInstance === null)
             return;
@@ -896,8 +1125,8 @@ class StudioModelMeshInstance {
         this.materialInstance.movement(renderContext);
     }
 
-    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager, modelMatrix: mat4) {
-        if (!this.visible || this.materialInstance === null || !this.materialInstance.visible || !this.materialInstance.isMaterialLoaded())
+    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager, modelMatrix: ReadonlyMat4, boneMatrix: ReadonlyMat4[]) {
+        if (!this.visible || this.materialInstance === null || !this.materialInstance.isMaterialVisible(renderContext))
             return;
 
         const template = renderInstManager.pushTemplateRenderInst();
@@ -915,6 +1144,7 @@ class StudioModelMeshInstance {
             for (let j = 0; j < stripGroupData.stripData.length; j++) {
                 const stripData = stripGroupData.stripData[j];
                 const renderInst = renderInstManager.newRenderInst();
+                this.materialInstance.setOnRenderInstSkinningParams(renderInst, boneMatrix, stripData.hardwareBoneTable);
                 renderInst.drawIndexes(stripData.indexCount, stripData.firstIndex);
                 renderInstManager.submitRenderInst(renderInst);
             }
@@ -942,9 +1172,9 @@ class StudioModelLODInstance {
             this.meshInstance[i].movement(renderContext);
     }
 
-    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager, modelMatrix: mat4) {
+    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager, modelMatrix: ReadonlyMat4, boneMatrix: ReadonlyMat4[]) {
         for (let i = 0; i < this.meshInstance.length; i++)
-            this.meshInstance[i].prepareToRender(renderContext, renderInstManager, modelMatrix);
+            this.meshInstance[i].prepareToRender(renderContext, renderInstManager, modelMatrix, boneMatrix);
     }
 
     public destroy(device: GfxDevice): void {
@@ -956,20 +1186,23 @@ class StudioModelLODInstance {
 export class StudioModelInstance {
     public visible: boolean = true;
     public modelMatrix = mat4.create();
+    public worldFromPoseMatrix: mat4[];
 
     private lodInstance: StudioModelLODInstance[] = [];
 
-    constructor(renderContext: SourceRenderContext, private modelData: StudioModelData, materialParams: EntityMaterialParameters) {
-        assert(this.modelData.bodyPartData.length === 1);
+    constructor(renderContext: SourceRenderContext, public modelData: StudioModelData, materialParams: EntityMaterialParameters) {
+        // assert(this.modelData.bodyPartData.length === 1);
         const bodyPartData = this.modelData.bodyPartData[0];
 
-        assert(bodyPartData.submodelData.length === 1);
+        // assert(bodyPartData.submodelData.length === 1);
         const submodelData = bodyPartData.submodelData[0];
 
         for (let k = 0; k < submodelData.lodData.length; k++) {
             const lodData = submodelData.lodData[k];
             this.lodInstance.push(new StudioModelLODInstance(renderContext, lodData, materialParams));
         }
+
+        this.worldFromPoseMatrix = nArray(this.modelData.bones.length, () => mat4.create());
     }
 
     public setColorMeshData(device: GfxDevice, data: HardwareVertData): void {
@@ -995,6 +1228,16 @@ export class StudioModelInstance {
         }
     }
 
+    public setSkin(renderContext: SourceRenderContext, skin: number): void {
+        for (let i = 0; i < this.lodInstance.length; i++) {
+            const lodInstance = this.lodInstance[i];
+            for (let j = 0; j < lodInstance.meshInstance.length; j++) {
+                const meshInstance = lodInstance.meshInstance[j];
+                meshInstance.setSkin(renderContext, skin);
+            }
+        }
+    }
+
     private getLODModelIndex(renderContext: SourceRenderContext): number {
         // TODO(jstpierre): Pull out the proper LOD model.
         return 0;
@@ -1009,8 +1252,24 @@ export class StudioModelInstance {
         if (!this.visible)
             return;
 
+        for (let i = 0; i < this.worldFromPoseMatrix.length; i++) {
+            const bone = this.modelData.bones[i];
+
+            // Parent-from-bone
+            computeModelMatrixPosRadianEuler(this.worldFromPoseMatrix[i], bone.pos, bone.rot);
+
+            // World-from-bone
+            const parentBoneMatrix = bone.parent >= 0 ? this.worldFromPoseMatrix[bone.parent] : this.modelMatrix;
+            mat4.mul(this.worldFromPoseMatrix[i], parentBoneMatrix, this.worldFromPoseMatrix[i]);
+        }
+
+        for (let i = 0; i < this.worldFromPoseMatrix.length; i++) {
+            // After we've built our world-from-bone array, compute world-from-pose.
+            mat4.mul(this.worldFromPoseMatrix[i], this.worldFromPoseMatrix[i], this.modelData.bones[i].poseToBone);
+        }
+
         const lodIndex = this.getLODModelIndex(renderContext);
-        this.lodInstance[lodIndex].prepareToRender(renderContext, renderInstManager, this.modelMatrix);
+        this.lodInstance[lodIndex].prepareToRender(renderContext, renderInstManager, this.modelMatrix, this.worldFromPoseMatrix);
     }
 
     public destroy(device: GfxDevice): void {

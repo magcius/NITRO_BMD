@@ -7,7 +7,7 @@ import * as BRRES from './brres';
 
 import { leftPad } from '../util';
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { GfxDevice, GfxHostAccessPass } from '../gfx/platform/GfxPlatform';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
 import { MDL0ModelInstance, MDL0Model, RRESTextureHolder } from './render';
 import { BasicGXRendererHelper, fillSceneParamsDataOnTemplate } from '../gx/gx_render';
 import AnimationController from '../AnimationController';
@@ -67,12 +67,12 @@ class ElebitsRenderer extends BasicGXRendererHelper {
         return panels;
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 

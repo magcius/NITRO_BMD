@@ -15,7 +15,7 @@ import { vec3, vec2, vec4 } from "gl-matrix";
 import { makeStaticDataBufferFromSlice } from "../gfx/helpers/BufferHelpers";
 import { getFormatByteSize } from "../gfx/platform/GfxPlatformFormat";
 import { Destroyable } from "../SceneBase";
-import { GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { TextureMapping } from "../TextureHolder";
 
 export const enum Asset_Type {
@@ -147,9 +147,7 @@ class Texture_Asset {
             d = Math.max((d >>> 1), 1);
         }
 
-        const pass = device.createHostAccessPass();
-        pass.uploadTextureData(this.texture, 0, levelData);
-        device.submitPass(pass);
+        device.uploadTextureData(this.texture, 0, levelData);
     }
 
     public fillTextureMapping(m: TextureMapping): void {

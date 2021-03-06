@@ -1,4 +1,4 @@
-import { assert } from "./util";
+import { assert, setBitFlagEnabled } from "./util";
 
 // Moderately memory-efficient way of storing some number of bits.
 
@@ -42,10 +42,7 @@ export default class BitMap {
     public setBit(bitIndex: number, bitValue: boolean): void {
         const wordIndex = bitIndex >>> 5;
         const mask = (1 << (31 - (bitIndex & 0x1F))) >>> 0;
-        if (bitValue)
-            this.words[wordIndex] |= mask;
-        else
-            this.words[wordIndex] &= ~mask;
+        this.words[wordIndex] = setBitFlagEnabled(this.words[wordIndex], mask, bitValue);
     }
 
     public getBit(bitIndex: number): boolean {
@@ -63,8 +60,12 @@ export default class BitMap {
     }
 }
 
+export function bitMapGetSerializedByteLength(numBits: number): number {
+    return (numBits + 7) >>> 3;
+}
+
 export function bitMapSerialize(view: DataView, offs: number, bitMap: BitMap): number {
-    const numBytes = (bitMap.numBits + 7) >>> 3;
+    const numBytes = bitMapGetSerializedByteLength(bitMap.numBits);
     for (let i = 0; i < numBytes; i++) {
         const shift = 24 - ((i & 0x03) << 3);
         view.setUint8(offs++, (bitMap.words[i >>> 2] >>> shift) & 0xFF);
@@ -73,7 +74,7 @@ export function bitMapSerialize(view: DataView, offs: number, bitMap: BitMap): n
 }
 
 export function bitMapDeserialize(view: DataView, offs: number, bitMap: BitMap): number {
-    const numBytes = (bitMap.numBits + 7) >>> 3;
+    const numBytes = bitMapGetSerializedByteLength(bitMap.numBits);
     for (let i = 0; i < numBytes; i++) {
         const shift = 24 - ((i & 0x03) << 3);
         bitMap.words[i >>> 2] |= view.getUint8(offs++) << shift;

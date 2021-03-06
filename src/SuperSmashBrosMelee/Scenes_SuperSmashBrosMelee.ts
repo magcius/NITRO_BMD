@@ -1,18 +1,19 @@
 
 import { BasicGXRendererHelper, fillSceneParamsDataOnTemplate } from "../gx/gx_render";
-import { GfxDevice, GfxHostAccessPass } from "../gfx/platform/GfxPlatform";
+import { GfxDevice } from "../gfx/platform/GfxPlatform";
 import { HSD_JObjRoot_Instance, HSD_JObjRoot_Data, HSD_AObj_Instance } from "./SYSDOLPHIN_Render";
 import { ViewerRenderInput, SceneGfx, SceneGroup } from "../viewer";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { SceneDesc, SceneContext } from "../SceneBase";
 import { HSD_ArchiveParse, HSD_JObjLoadJoint, HSD_JObjRoot, HSD_Archive_FindPublic, HSD_AObjLoadAnimJoint, HSD_AObjLoadMatAnimJoint, HSD_AObjLoadShapeAnimJoint, HSD_Archive, HSD_LoadContext, HSD_LoadContext__ResolvePtr, HSD_LoadContext__ResolveSymbol } from "./SYSDOLPHIN";
-import { colorFromRGBA8 } from "../Color";
-import { assertExists, assert, fallbackUndefined } from "../util";
+import { colorNewFromRGBA8 } from "../Color";
+import { assertExists, assert, nullify } from "../util";
 import { Melee_ftData_Load, Melee_SplitDataAJ, Melee_figatree_Load, figatree, ftData } from "./Melee_ft";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { DataFetcher } from "../DataFetcher";
 import { Melee_map_headData_Load } from "./Melee_map_head";
 import { CameraController } from "../Camera";
+import { makeClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
 
 class ModelCache {
     public data: HSD_JObjRoot_Data[] = [];
@@ -49,7 +50,7 @@ export class MeleeRenderer extends BasicGXRendererHelper {
         c.setSceneMoveSpeedMult(4/60);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         const renderInstManager = this.renderHelper.renderInstManager;
         const template = this.renderHelper.pushTemplateRenderInst();
 
@@ -65,7 +66,7 @@ export class MeleeRenderer extends BasicGXRendererHelper {
         }
 
         renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
     public destroy(device: GfxDevice): void {
@@ -253,7 +254,7 @@ class MeleeTitleDesc implements SceneDesc {
         const arc = HSD_ArchiveParse(await dataFetcher.fetchData(`${pathBase}/GmTtAll.usd`));
 
         const scene = new MeleeRenderer(device);
-        colorFromRGBA8(scene.clearRenderPassDescriptor.colorClearColor, 0x262626FF);
+        scene.clearRenderPassDescriptor = makeClearRenderPassDescriptor(colorNewFromRGBA8(0x262626FF));
 
         const ctx = new HSD_LoadContext(arc);
         const bg = new HSD_JObjRoot_Instance(scene.modelCache.loadJObjRoot(HSD_JObjLoadJoint(ctx, assertExists(HSD_Archive_FindPublic(arc, `TtlBg_Top_joint`)))!));
@@ -292,7 +293,7 @@ class MeleeMapDesc implements SceneDesc {
             if (bg_gobj.jobj === null)
                 continue;
             const bg = new HSD_JObjRoot_Instance(scene.modelCache.loadJObjRoot(bg_gobj.jobj));
-            bg.addAnimAll(fallbackUndefined(bg_gobj.anim[0], null), fallbackUndefined(bg_gobj.matAnim[0], null), fallbackUndefined(bg_gobj.shapeAnim[0], null));
+            bg.addAnimAll(nullify(bg_gobj.anim[0]), nullify(bg_gobj.matAnim[0]), nullify(bg_gobj.shapeAnim[0]));
             scene.jobjRoots.push(bg);
         }
 

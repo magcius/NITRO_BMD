@@ -3,17 +3,16 @@
 // http://read.pudn.com/downloads4/sourcecode/zip/14045/LZSS.C__.htm
 
 import ArrayBufferSlice from "../../ArrayBufferSlice";
-import { readString } from "../../util";
 
-export function decompress(srcView: DataView) {
-    let uncompressedSize = srcView.getUint32(0x08, true);
+export function decompress(srcView: DataView, uncompressedSize: number) {
     const dstBuffer = new Uint8Array(uncompressedSize);
 
-    let srcOffs = 0x10;
+    let srcOffs = 0x00;
     let dstOffs = 0x00;
 
-    const tempBuffer = new Uint8Array(4096);
-    let tempBufferWP = 0xFEE;
+    const N = 4096, F = 18;
+    const tempBuffer = new Uint8Array(N);
+    let tempBufferWP = N - F;
 
     while (true) {
         const commandByte = srcView.getUint8(srcOffs++);
@@ -22,7 +21,7 @@ export function decompress(srcView: DataView) {
                 // Literal.
                 uncompressedSize--;
                 tempBuffer[tempBufferWP++] = dstBuffer[dstOffs++] = srcView.getUint8(srcOffs++);
-                tempBufferWP %= 4096;
+                tempBufferWP %= N;
             } else {
                 const b0 = srcView.getUint8(srcOffs++);
                 const b1 = srcView.getUint8(srcOffs++);
@@ -33,8 +32,8 @@ export function decompress(srcView: DataView) {
                 uncompressedSize -= copyLength;
                 while (copyLength--) {
                     tempBuffer[tempBufferWP++] = dstBuffer[dstOffs++] = tempBuffer[tempBufferRP++];
-                    tempBufferWP %= 4096;
-                    tempBufferRP %= 4096;
+                    tempBufferWP %= N;
+                    tempBufferRP %= N;
                 }
             }
 
@@ -42,11 +41,4 @@ export function decompress(srcView: DataView) {
                 return new ArrayBufferSlice(dstBuffer.buffer);
         }
     }
-}
-
-export function maybeDecompress(buffer: ArrayBufferSlice): ArrayBufferSlice {
-    if (readString(buffer, 0x00, 0x04) === 'LzS\x01')
-        return decompress(buffer.createDataView());
-    else
-        return buffer;
 }

@@ -2,7 +2,7 @@
 import { dScnKy_env_light_c, dKy_efplight_set, dKy_efplight_cut, dKy_actor_addcol_amb_set, dKy_actor_addcol_dif_set, dKy_bg_addcol_amb_set, dKy_bg_addcol_dif_set, dKy_bg1_addcol_amb_set, dKy_bg1_addcol_dif_set, dKy_vrbox_addcol_sky0_set, dKy_vrbox_addcol_kasumi_set, dKy_addcol_fog_set, dKy_set_actcol_ratio, dKy_set_bgcol_ratio, dKy_set_fogcol_ratio, dKy_set_vrboxcol_ratio, dKy_get_dayofweek, dKy_checkEventNightStop, dKy_get_seacolor, dKy_GxFog_sea_set } from "./d_kankyo";
 import { dGlobals } from "./zww_scenes";
 import { cM_rndF, cLib_addCalc, cM_rndFX, cLib_addCalcAngleRad } from "./SComponent";
-import { vec3, mat4, vec4, vec2 } from "gl-matrix";
+import { vec3, mat4, vec4, vec2, ReadonlyVec3 } from "gl-matrix";
 import { Color, colorFromRGBA, colorFromRGBA8, colorLerp, colorCopy, colorNewCopy, colorNewFromRGBA8, White } from "../Color";
 import { computeMatrixWithoutTranslation, MathConstants, saturate, invlerp } from "../MathHelpers";
 import { fGlobals, fpcPf__Register, fpc__ProcessName, fpc_bs__Constructor, kankyo_class, cPhs__Status, fopKyM_Delete, fopKyM_create } from "./framework";
@@ -10,7 +10,7 @@ import { J3DModelInstance } from "../Common/JSYSTEM/J3D/J3DGraphBase";
 import { mDoExt_btkAnm, mDoExt_brkAnm, mDoExt_modelUpdateDL } from "./m_do_ext";
 import { ResType } from "./d_resorce";
 import { LoopMode } from "../Common/JSYSTEM/J3D/J3DLoader";
-import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../viewer";
 import { MtxTrans, mDoMtx_ZrotM, mDoMtx_XrotM, calc_mtx } from "./d_a";
 import { BTIData, BTI_Texture } from "../Common/JSYSTEM/JUTTexture";
@@ -23,10 +23,11 @@ import { GfxDevice, GfxCompareMode } from "../gfx/platform/GfxPlatform";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { nArray, assertExists, assert } from "../util";
 import { uShortTo2PI } from "./Grass";
-import { JPABaseEmitter, BaseEmitterFlags } from "../Common/JSYSTEM/JPA";
+import { JPABaseEmitter } from "../Common/JSYSTEM/JPA";
 import { PeekZResult, PeekZManager } from "./d_dlst_peekZ";
 import { compareDepthValues } from "../gfx/helpers/ReversedDepthHelpers";
 import { dfRange, dfShow } from "../DebugFloaters";
+import { _T } from "../gfx/platform/GfxPlatformImpl";
 
 export function dKyr__sun_arrival_check(envLight: dScnKy_env_light_c): boolean {
     return envLight.curTime > 97.5 && envLight.curTime < 292.5;
@@ -749,9 +750,17 @@ export class dKankyo_vrkumo_Packet {
                 ddraw.color4color(GX.Attr.CLR0, materialParams.u_Color[ColorKind.C0]);
                 ddraw.texCoord2f32(GX.Attr.TEX0, 0, 1);
 
-                // const ctx = getDebugOverlayCanvas2D();
-                // colorCopy(materialParams.u_Color[ColorKind.C0], Magenta, kumo.alpha);
-                // drawWorldSpacePoint(ctx, viewerInput.camera, kumo.position, materialParams.u_Color[ColorKind.C0], 300 * Math.abs(kumo.height));
+/*
+                const ctx = getDebugOverlayCanvas2D();
+                const c = textureIdx === 0 ? Magenta : textureIdx === 1 ? Green : Blue;
+                colorCopy(materialParams.u_Color[ColorKind.C0], c, kumo.alpha);
+                vec3.set(scratchVec3e, x, y, z);
+                vec3.scale(scratchVec3e, scratchVec3e, 10000);
+                scratchVec3e[0] += -196400;
+                scratchVec3e[1] = scratchVec3e[1] * 0.5 + 3000;
+                scratchVec3e[2] += 295960;
+                drawWorldSpacePoint(ctx, viewerInput.camera.clipFromWorldMatrix, scratchVec3e, materialParams.u_Color[ColorKind.C0], 50 * height);
+*/
             }
 
             ddraw.end();
@@ -838,11 +847,12 @@ export class dKankyo_rain_Packet {
         envLight.wetherCommonTextures.snowTexture.fillTextureMapping(materialParams.m_TextureMapping[0]);
 
         // To save on draw call count, all rain currently have the same alpha.
-        const alpha = this.instances[0].alpha * 14/0xFF;
+        const alpha = 14/0xFF;
         colorFromRGBA(materialParams.u_Color[ColorKind.C0], 1.0, 1.0, 1.0, alpha);
 
         for (let i = 0; i < this.rainCount; i++) {
             const rain = this.instances[i];
+            vec3.add(scratchVec3, rain.basePos, rain.pos);
 
             if (rain.alpha <= 0.001)
                 continue;
@@ -908,8 +918,11 @@ export class dKankyo_rain_Packet {
 
         // Sibuki means "splash"
         const envLight = globals.g_env_light;
-        const ddraw = this.ddraw;
 
+        const sibukiCount = envLight.rainCount >>> 1;
+        if (sibukiCount < 1)
+            return;
+    
         const alphaTarget = this.sibukiHidden ? 0.0 : 200/255;
         this.sibukiAlpha = cLib_addCalc(this.sibukiAlpha, alphaTarget, 0.2, 3.0, 0.001);
 
@@ -925,14 +938,13 @@ export class dKankyo_rain_Packet {
         if (finalAlpha <= 0.001)
             return;
 
+        const ddraw = this.ddraw;
         renderInstManager.setCurrentRenderInstList(globals.dlst.wetherEffect);
 
         colorFromRGBA8(materialParams.u_Color[ColorKind.C0], 0xB4C8C800);
         materialParams.u_Color[ColorKind.C0].a = finalAlpha;
         colorCopy(materialParams.u_Color[ColorKind.C1], materialParams.u_Color[ColorKind.C0]);
         this.ringTexture.fillTextureMapping(materialParams.m_TextureMapping[0]);
-
-        const sibukiCount = envLight.rainCount >>> 1;
 
         dKy_set_eyevect_calc(globals, scratchVec3, 7000.0, 4000.0);
 
@@ -1537,7 +1549,7 @@ function dKyr_windline_move(globals: dGlobals, deltaTimeInFrames: number): void 
 
     const pkt = envLight.windline!;
     const windVec = dKyw_get_wind_vec(envLight);
-    const windPow = dKyw_get_wind_pow(envLight);
+    const windPow = saturate(dKyw_get_wind_pow(envLight));
 
     const hasCustomWindPower = envLight.customWindPower > 0.0;
 
@@ -1619,8 +1631,7 @@ function dKyr_windline_move(globals: dGlobals, deltaTimeInFrames: number): void 
                 }
 
                 // TODO(jstpierre): dPa_control_c
-                const device = globals.modelCache.device, cache = globals.modelCache.cache;
-                eff.emitter = globals.renderer.effectSystem.createBaseEmitter(device, cache, 0x31);
+                eff.emitter = globals.particleCtrl.set(globals, 0, 0x31, null)!;
                 vec3.add(eff.emitter.globalTranslation, eff.basePos, eff.animPos);
 
                 let effScale = hasCustomWindPower ? 0.14 : 1.0;
@@ -1700,8 +1711,7 @@ function dKyr_windline_move(globals: dGlobals, deltaTimeInFrames: number): void 
                 eff.stateTimer = cLib_addCalc(eff.stateTimer, 0.0, speed, maxVel * (0.1 + 0.01 * (i / 30)), 0.01);
                 if (eff.stateTimer <= 0.0) {
                     emitter.deleteAllParticle();
-                    emitter.maxFrame = -1;
-                    emitter.flags |= BaseEmitterFlags.STOP_EMIT_PARTICLES;
+                    emitter.becomeInvalidEmitterImmediate();
                     eff.emitter = null;
                     eff.state = 0;
                 }
@@ -1769,6 +1779,20 @@ function wether_move_rain(globals: dGlobals, deltaTimeInFrames: number): void {
     if (pkt.rainCount === 0)
         return;
 
+    let fadeMaxXZDist = 0;
+    let fadeMaxY = 0;
+
+    const roomType = (globals.dStage_dt.stag.roomTypeAndSchBit >>> 16) & 0x07;
+    if (roomType === 2 && globals.stageName !== 'Ocrogh' && globals.stageName !== 'Omori') {
+        if (globals.stageName === 'Orichh')
+            fadeMaxXZDist = 2300.0;
+        else
+            fadeMaxXZDist = 1200.0;
+
+        if (globals.stageName === 'Atorizk')
+            fadeMaxY = 1300.0;
+    }
+
     // TODO(jstpierre): Center delta
     // dKyr_get_vectle_calc(pkt.camEyePos)
 
@@ -1816,8 +1840,19 @@ function wether_move_rain(globals: dGlobals, deltaTimeInFrames: number): void {
             rain.initialized = true;
         }
 
-        // TODO(jstpierre): Set rain alpha
-        rain.alpha = 1.0;
+        let alpha = 1.0;
+
+        if (fadeMaxXZDist > 0.0) {
+            vec3.add(scratchVec3c, rain.basePos, rain.pos);
+
+            const distXZ = Math.hypot(scratchVec3c[0], scratchVec3c[2]);
+            if (distXZ < fadeMaxXZDist)
+                alpha = 0.0;
+            if (scratchVec3c[1] < fadeMaxY)
+                alpha = 0.0;
+        }
+
+        rain.alpha = alpha;
     }
 
     if (envLight.rainCount < pkt.rainCount)
@@ -2236,7 +2271,7 @@ export function dKyw_wind_set(globals: dGlobals): void {
     envLight.windPower = cLib_addCalc(envLight.windPower, targetWindPower, 0.1, 1.0, 0.005);
 }
 
-export function dKyw_get_wind_vec(envLight: dScnKy_env_light_c): vec3 {
+export function dKyw_get_wind_vec(envLight: dScnKy_env_light_c): ReadonlyVec3 {
     return envLight.windVec;
 }
 
@@ -2246,6 +2281,11 @@ export function dKyw_get_wind_pow(envLight: dScnKy_env_light_c): number {
 
 export function dKyw_get_wind_vecpow(dst: vec3, envLight: dScnKy_env_light_c): void {
     vec3.scale(dst, envLight.windVec, envLight.windPower);
+}
+
+export function dKyw_get_AllWind_vecpow(dst: vec3, envLight: dScnKy_env_light_c, pos: ReadonlyVec3): void {
+    // dKyw_pntwind_get_info()
+    dKyw_get_wind_vecpow(dst, envLight);
 }
 
 export function dKy_wave_chan_init(globals: dGlobals): void {

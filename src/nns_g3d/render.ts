@@ -5,7 +5,7 @@ import * as Viewer from '../viewer';
 import * as NITRO_GX from '../SuperMario64DS/nitro_gx';
 import { readTexture, getFormatName, Texture, parseTexImageParamWrapModeS, parseTexImageParamWrapModeT, textureFormatIsTranslucent } from "../SuperMario64DS/nitro_tex";
 import { NITRO_Program, VertexData } from '../SuperMario64DS/render';
-import { GfxRenderInstManager, GfxRenderInst, GfxRendererLayer, makeSortKeyOpaque } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRenderInst, GfxRendererLayer, makeSortKeyOpaque } from "../gfx/render/GfxRenderInstManager";
 import { TextureMapping } from "../TextureHolder";
 import { fillMatrix4x3, fillMatrix3x2, fillVec4 } from "../gfx/helpers/UniformBufferHelpers";
 import { computeViewMatrix, computeViewMatrixSkybox } from "../Camera";
@@ -126,9 +126,8 @@ class MaterialInstance {
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, 1));
         device.setResourceName(gfxTexture, textureName);
         this.gfxTextures.push(gfxTexture);
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, [pixels]);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, [pixels]);
 
         this.viewerTextures.push(textureToCanvas(texture, pixels, fullTextureName));
         return texture;

@@ -8,20 +8,22 @@ import * as GX_Material from './gx_material';
 import * as GX_Texture from './gx_texture';
 import * as Viewer from '../viewer';
 
-import { assert, nArray, assertExists } from '../util';
+import { assert, nArray, assertExists, setBitFlagEnabled } from '../util';
 import { LoadedVertexData, LoadedVertexDraw, LoadedVertexLayout, VertexAttributeInput } from './gx_displaylist';
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { TextureMapping, TextureHolder, LoadedTexture } from '../TextureHolder';
 
 import { GfxBufferCoalescerCombo, makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers';
 import { fillColor, fillMatrix4x3, fillVec4, fillMatrix4x4, fillVec3v, fillMatrix4x2 } from '../gfx/helpers/UniformBufferHelpers';
-import { GfxFormat, GfxDevice, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxBindingLayoutDescriptor, GfxVertexBufferDescriptor, GfxBufferUsage, GfxVertexAttributeDescriptor, GfxBuffer, GfxInputLayout, GfxInputState, GfxMegaStateDescriptor, GfxProgram, GfxVertexBufferFrequency, GfxHostAccessPass, GfxRenderPass, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D, GfxColorWriteMask } from '../gfx/platform/GfxPlatform';
-import { standardFullClearRenderPassDescriptor, BasicRenderTarget } from '../gfx/helpers/RenderTargetHelpers';
-import { GfxRenderInst, GfxRenderInstManager, setSortKeyProgramKey } from '../gfx/render/GfxRenderer';
+import { GfxFormat, GfxDevice, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxBindingLayoutDescriptor, GfxVertexBufferDescriptor, GfxBufferUsage, GfxVertexAttributeDescriptor, GfxBuffer, GfxInputLayout, GfxInputState, GfxMegaStateDescriptor, GfxProgram, GfxVertexBufferFrequency, GfxRenderPass, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D, GfxColorWriteMask, GfxCullMode, GfxBlendFactor, GfxCompareMode, GfxFrontFaceMode, GfxBlendMode } from '../gfx/platform/GfxPlatform';
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers';
+import { GfxRenderInst, GfxRenderInstManager, setSortKeyProgramKey } from '../gfx/render/GfxRenderInstManager';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { Color, TransparentBlack, colorNewCopy, colorFromRGBA } from '../Color';
-import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers';
+import { AttachmentStateSimple, setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers';
+import { reverseDepthForCompareMode } from '../gfx/helpers/ReversedDepthHelpers';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 export enum ColorKind {
     MAT0, MAT1, AMB0, AMB1,
@@ -132,7 +134,7 @@ function fillMaterialParamsDataWithOptimizations(material: GX_Material.GXMateria
     assert(d.length >= offs);
 }
 
-function fillPacketParamsDataWithOptimizations(material: GX_Material.GXMaterial, d: Float32Array, bOffs: number, packetParams: PacketParams): void {
+function fillDrawParamsDataWithOptimizations(material: GX_Material.GXMaterial, d: Float32Array, bOffs: number, packetParams: PacketParams): void {
     let offs = bOffs;
 
     if (GX_Material.materialUsePnMtxIdx(material))
@@ -201,20 +203,15 @@ export function loadTextureFromMipChain(device: GfxDevice, mipChain: GX_Texture.
     const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, firstMipLevel.width, firstMipLevel.height, mipChain.mipLevels.length));
     device.setResourceName(gfxTexture, mipChain.name);
 
-    const hostAccessPass = device.createHostAccessPass();
     const promises: Promise<void>[] = [];
     for (let i = 0; i < mipChain.mipLevels.length; i++) {
         const level = i;
         const mipLevel = mipChain.mipLevels[i];
 
         promises.push(GX_Texture.decodeTexture(mipLevel).then((rgbaTexture) => {
-            hostAccessPass.uploadTextureData(gfxTexture, level, [rgbaTexture.pixels]);
+            device.uploadTextureData(gfxTexture, level, [rgbaTexture.pixels]);
         }));
     }
-
-    Promise.all(promises).then(() => {
-        device.submitPass(hostAccessPass);
-    });
 
     const viewerExtraInfo = new Map<string, string>();
     viewerExtraInfo.set("Format", GX_Texture.getFormatName(firstMipLevel.format, firstMipLevel.paletteFormat));
@@ -333,11 +330,126 @@ export function autoOptimizeMaterial(material: GX_Material.GXMaterial): void {
         material.hasFogBlock = autoOptimizeMaterialHasFogBlock(material);
 }
 
+export function translateCullMode(cullMode: GX.CullMode): GfxCullMode {
+    switch (cullMode) {
+    case GX.CullMode.ALL:
+        return GfxCullMode.FRONT_AND_BACK;
+    case GX.CullMode.FRONT:
+        return GfxCullMode.FRONT;
+    case GX.CullMode.BACK:
+        return GfxCullMode.BACK;
+    case GX.CullMode.NONE:
+        return GfxCullMode.NONE;
+    }
+}
+
+function translateBlendFactorCommon(blendFactor: GX.BlendFactor): GfxBlendFactor {
+    switch (blendFactor) {
+    case GX.BlendFactor.ZERO:
+        return GfxBlendFactor.ZERO;
+    case GX.BlendFactor.ONE:
+        return GfxBlendFactor.ONE;
+    case GX.BlendFactor.SRCALPHA:
+        return GfxBlendFactor.SRC_ALPHA;
+    case GX.BlendFactor.INVSRCALPHA:
+        return GfxBlendFactor.ONE_MINUS_SRC_ALPHA;
+    case GX.BlendFactor.DSTALPHA:
+        return GfxBlendFactor.DST_ALPHA;
+    case GX.BlendFactor.INVDSTALPHA:
+        return GfxBlendFactor.ONE_MINUS_DST_ALPHA;
+    default:
+        throw new Error("whoops");
+    }
+}
+
+function translateBlendSrcFactor(blendFactor: GX.BlendFactor): GfxBlendFactor {
+    switch (blendFactor) {
+    case GX.BlendFactor.SRCCLR:
+        return GfxBlendFactor.DST_COLOR;
+    case GX.BlendFactor.INVSRCCLR:
+        return GfxBlendFactor.ONE_MINUS_DST_COLOR;
+    default:
+        return translateBlendFactorCommon(blendFactor);
+    }
+}
+
+function translateBlendDstFactor(blendFactor: GX.BlendFactor): GfxBlendFactor {
+    switch (blendFactor) {
+    case GX.BlendFactor.SRCCLR:
+        return GfxBlendFactor.SRC_COLOR;
+    case GX.BlendFactor.INVSRCCLR:
+        return GfxBlendFactor.ONE_MINUS_SRC_COLOR;
+    default:
+        return translateBlendFactorCommon(blendFactor);
+    }
+}
+
+function translateCompareType(compareType: GX.CompareType): GfxCompareMode {
+    switch (compareType) {
+    case GX.CompareType.NEVER:
+        return GfxCompareMode.NEVER;
+    case GX.CompareType.LESS:
+        return GfxCompareMode.LESS;
+    case GX.CompareType.EQUAL:
+        return GfxCompareMode.EQUAL;
+    case GX.CompareType.LEQUAL:
+        return GfxCompareMode.LEQUAL;
+    case GX.CompareType.GREATER:
+        return GfxCompareMode.GREATER;
+    case GX.CompareType.NEQUAL:
+        return GfxCompareMode.NEQUAL;
+    case GX.CompareType.GEQUAL:
+        return GfxCompareMode.GEQUAL;
+    case GX.CompareType.ALWAYS:
+        return GfxCompareMode.ALWAYS;
+    }
+}
+
+function translateGfxMegaState(material: GX_Material.GXMaterial) {
+    const megaState: Partial<GfxMegaStateDescriptor> = {};
+    megaState.cullMode = translateCullMode(material.cullMode);
+    megaState.depthWrite = material.ropInfo.depthWrite;
+    megaState.depthCompare = material.ropInfo.depthTest ? reverseDepthForCompareMode(translateCompareType(material.ropInfo.depthFunc)) : GfxCompareMode.ALWAYS;
+    megaState.frontFace = GfxFrontFaceMode.CW;
+
+    const attachmentStateSimple: Partial<AttachmentStateSimple> = {};
+
+    if (material.ropInfo.blendMode === GX.BlendMode.NONE) {
+        attachmentStateSimple.blendMode = GfxBlendMode.ADD;
+        attachmentStateSimple.blendSrcFactor = GfxBlendFactor.ONE;
+        attachmentStateSimple.blendDstFactor = GfxBlendFactor.ZERO;
+    } else if (material.ropInfo.blendMode === GX.BlendMode.BLEND) {
+        attachmentStateSimple.blendMode = GfxBlendMode.ADD;
+        attachmentStateSimple.blendSrcFactor = translateBlendSrcFactor(material.ropInfo.blendSrcFactor);
+        attachmentStateSimple.blendDstFactor = translateBlendDstFactor(material.ropInfo.blendDstFactor);
+    } else if (material.ropInfo.blendMode === GX.BlendMode.SUBTRACT) {
+        attachmentStateSimple.blendMode = GfxBlendMode.REVERSE_SUBTRACT;
+        attachmentStateSimple.blendSrcFactor = GfxBlendFactor.ONE;
+        attachmentStateSimple.blendDstFactor = GfxBlendFactor.ONE;
+    } else if (material.ropInfo.blendMode === GX.BlendMode.LOGIC) {
+        // Sonic Colors uses this? WTF?
+        attachmentStateSimple.blendMode = GfxBlendMode.ADD;
+        attachmentStateSimple.blendSrcFactor = GfxBlendFactor.ONE;
+        attachmentStateSimple.blendDstFactor = GfxBlendFactor.ZERO;
+        console.warn(`Unimplemented LOGIC blend mode`);
+    }
+
+    attachmentStateSimple.colorWriteMask = GfxColorWriteMask.NONE;
+
+    if (material.ropInfo.colorUpdate)
+        attachmentStateSimple.colorWriteMask |= GfxColorWriteMask.COLOR;
+    if (material.ropInfo.alphaUpdate)
+        attachmentStateSimple.colorWriteMask |= GfxColorWriteMask.ALPHA;
+
+    setAttachmentStateSimple(megaState, attachmentStateSimple);
+    return megaState;
+}
+
 export class GXMaterialHelperGfx {
     public programKey: number;
     public megaStateFlags: Partial<GfxMegaStateDescriptor>;
     public materialParamsBufferSize: number;
-    public packetParamsBufferSize: number;
+    public drawParamsBufferSize: number;
     private materialHacks: GX_Material.GXMaterialHacks = {};
     private program!: GX_Material.GX_Program;
     private gfxProgram: GfxProgram | null = null;
@@ -346,20 +458,20 @@ export class GXMaterialHelperGfx {
         if (materialHacks)
             Object.assign(this.materialHacks, materialHacks);
 
-        this.calcMaterialParamsBufferSize();
-        this.calcPacketParamsBufferSize();
+        this.materialInvalidated();
+    }
+
+    public autoOptimizeMaterial(): void {
+        autoOptimizeMaterial(this.material);
+        this.materialInvalidated();
+    }
+
+    public materialInvalidated(): void {
+        this.materialParamsBufferSize = GX_Material.getMaterialParamsBlockSize(this.material);
+        this.drawParamsBufferSize = GX_Material.getDrawParamsBlockSize(this.material);
         this.createProgram();
 
-        this.megaStateFlags = {};
-        GX_Material.translateGfxMegaState(this.megaStateFlags, this.material);
-    }
-
-    public calcMaterialParamsBufferSize(): void {
-        this.materialParamsBufferSize = GX_Material.getMaterialParamsBlockSize(this.material);
-    }
-
-    public calcPacketParamsBufferSize(): void {
-        this.packetParamsBufferSize = GX_Material.getPacketParamsBlockSize(this.material);
+        this.megaStateFlags = translateGfxMegaState(this.material);
     }
 
     public cacheProgram(device: GfxDevice, cache: GfxRenderCache): void {
@@ -396,10 +508,10 @@ export class GXMaterialHelperGfx {
         fillMaterialParamsDataWithOptimizations(this.material, d, offs, materialParams);
     }
 
-    public allocatePacketParamsDataOnInst(renderInst: GfxRenderInst, packetParams: PacketParams): void {
-        const offs = renderInst.allocateUniformBuffer(GX_Material.GX_Program.ub_PacketParams, this.packetParamsBufferSize);
-        const d = renderInst.mapUniformBufferF32(GX_Material.GX_Program.ub_PacketParams);
-        fillPacketParamsDataWithOptimizations(this.material, d, offs, packetParams);
+    public allocatePacketParamsDataOnInst(renderInst: GfxRenderInst, drawParams: PacketParams): void {
+        const offs = renderInst.allocateUniformBuffer(GX_Material.GX_Program.ub_DrawParams, this.drawParamsBufferSize);
+        const d = renderInst.mapUniformBufferF32(GX_Material.GX_Program.ub_DrawParams);
+        fillDrawParamsDataWithOptimizations(this.material, d, offs, drawParams);
     }
 
     public setOnRenderInst(device: GfxDevice, cache: GfxRenderCache, renderInst: GfxRenderInst): void {
@@ -412,31 +524,21 @@ export class GXMaterialHelperGfx {
 
 export function setChanWriteEnabled(materialHelper: GXMaterialHelperGfx, bits: GfxColorWriteMask, en: boolean): void {
     let colorWriteMask = materialHelper.megaStateFlags.attachmentsState![0].colorWriteMask;
-    if (en)
-        colorWriteMask |= bits;
-    else
-        colorWriteMask &= ~bits;
+    colorWriteMask = setBitFlagEnabled(colorWriteMask, bits, en);
     setAttachmentStateSimple(materialHelper.megaStateFlags, { colorWriteMask });
 }
 
-export function createInputLayout(device: GfxDevice, cache: GfxRenderCache, loadedVertexLayout: LoadedVertexLayout, wantZeroBuffer: boolean = true): GfxInputLayout {
+export function createInputLayout(device: GfxDevice, cache: GfxRenderCache, loadedVertexLayout: LoadedVertexLayout): GfxInputLayout {
     const vertexAttributeDescriptors: GfxVertexAttributeDescriptor[] = [];
 
-    let usesZeroBuffer = false;
     for (let attrInput: VertexAttributeInput = 0; attrInput < VertexAttributeInput.COUNT; attrInput++) {
         const attribLocation = GX_Material.getVertexInputLocation(attrInput);
-        const attribGenDef = GX_Material.getVertexInputGenDef(attrInput);
         const attrib = loadedVertexLayout.singleVertexInputLayouts.find((attrib) => attrib.attrInput === attrInput);
 
         if (attrib !== undefined) {
             const bufferByteOffset = attrib.bufferOffset;
             const bufferIndex = attrib.bufferIndex;
             vertexAttributeDescriptors.push({ location: attribLocation, format: attrib.format, bufferIndex, bufferByteOffset });
-        } else if (wantZeroBuffer) {
-            const bufferByteOffset = 0;
-            const bufferIndex = loadedVertexLayout.vertexBufferStrides.length;
-            vertexAttributeDescriptors.push({ location: attribLocation, format: attribGenDef.format, bufferIndex, bufferByteOffset });
-            usesZeroBuffer = true;
         }
     }
 
@@ -445,13 +547,6 @@ export function createInputLayout(device: GfxDevice, cache: GfxRenderCache, load
         vertexBufferDescriptors.push({
             byteStride: loadedVertexLayout.vertexBufferStrides[i],
             frequency: GfxVertexBufferFrequency.PER_VERTEX,
-        });
-    }
-
-    if (usesZeroBuffer) {
-        vertexBufferDescriptors.push({
-            byteStride: 0,
-            frequency: GfxVertexBufferFrequency.PER_INSTANCE,
         });
     }
 
@@ -493,17 +588,17 @@ export class GXShapeHelperGfx {
         this.inputState = device.createInputState(this.inputLayout, buffers, indexBuffer);
     }
 
-    public setOnRenderInst(renderInst: GfxRenderInst, packet: LoadedVertexDraw | null = null): void {
+    public setOnRenderInst(renderInst: GfxRenderInst, draw: LoadedVertexDraw | null = null): void {
         renderInst.setInputLayoutAndState(this.inputLayout, this.inputState);
 
-        if (packet === null) {
-            // Legacy API -- render a single packet.
+        if (draw === null) {
+            // Legacy API -- render a single draw.
             const loadedVertexData = assertExists(this.loadedVertexData);
             assert(loadedVertexData.draws.length === 1);
-            packet = loadedVertexData.draws[0];
+            draw = loadedVertexData.draws[0];
         }
 
-        renderInst.drawIndexes(packet.indexCount, packet.indexOffset);
+        renderInst.drawIndexes(draw.indexCount, draw.indexOffset);
     }
 
     public destroy(device: GfxDevice): void {
@@ -535,7 +630,6 @@ export class GXRenderHelperGfx extends GfxRenderHelper {
 }
 
 export abstract class BasicGXRendererHelper implements Viewer.SceneGfx {
-    public renderTarget = new BasicRenderTarget();
     public renderHelper: GXRenderHelperGfx;
     public clearRenderPassDescriptor = standardFullClearRenderPassDescriptor;
 
@@ -543,27 +637,39 @@ export abstract class BasicGXRendererHelper implements Viewer.SceneGfx {
         this.renderHelper = new GXRenderHelperGfx(device);
     }
 
-    protected abstract prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void;
+    protected abstract prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void;
 
     public getCache(): GfxRenderCache {
         return this.renderHelper.renderInstManager.gfxRenderCache;
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.clearRenderPassDescriptor);
-        renderInstManager.drawOnPassRenderer(device, passRenderer);
+
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
+
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
+
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return passRenderer;
     }
 
     public destroy(device: GfxDevice): void {
-        this.renderTarget.destroy(device);
         this.renderHelper.destroy(device);
     }
 }

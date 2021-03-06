@@ -9,12 +9,13 @@ import { Vec3One, lerp, MathConstants, getMatrixAxisZ, reflectVec3, normToLength
 import { getPathPoint, getPathTangent } from "./animation";
 import { ObjectDef } from "./room";
 import { ParticleManager } from "./particles";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { GfxDevice } from "../gfx/platform/GfxPlatform";
 
 const throwScratch = nArray(2, () => vec3.create());
 export class LevelGlobals {
     public throwBalls = true;
+    public playFlute = false;
 
     public collision: CollisionTree | null = null;
     public currentSong = 0;
@@ -41,12 +42,13 @@ export class LevelGlobals {
     public update(viewerInput: ViewerRenderInput): void {
         mat4.getTranslation(this.translation, viewerInput.camera.worldMatrix);
 
-        if (viewerInput.time > this.songStart + 10000) {
-            if (this.currentSong !== 0)
-                this.currentSong = 0;
-            else if (Math.random() < .5)
+        if (this.playFlute) {
+            if (this.currentSong === 0 || viewerInput.time > this.songStart + 10000) {
                 this.currentSong = InteractionType.PokefluteA + ((Math.random() * 3) >>> 0);
-            this.songStart = viewerInput.time;
+                this.songStart = viewerInput.time;
+            }
+        } else {
+            this.currentSong = 0;
         }
 
         if (this.lastThrow < 0)

@@ -3,7 +3,7 @@ import { GfxDevice } from "./gfx/platform/GfxPlatform";
 import { SceneGfx, ViewerRenderInput } from "./viewer";
 import { DataFetcher } from "./DataFetcher";
 import { DataShare } from "./DataShare";
-import { GfxRenderInstManager } from "./gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "./gfx/render/GfxRenderInstManager";
 import InputManager from "./InputManager";
 
 export interface ProgressMeter {

@@ -1,13 +1,16 @@
 const webpack = require('webpack');
-const merge = require('webpack-merge');
+const { merge } = require('webpack-merge');
 const common = require('./webpack.common.js');
 const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
 module.exports = merge(common, {
   mode: 'development',
-  devtool: 'cheap-module-eval-source-map',
+  devtool: 'eval-cheap-module-source-map',
   devServer: {
     contentBase: './dist',
+  },
+  cache: {
+    type: 'filesystem',
   },
   module: {
     rules: [
@@ -15,8 +18,6 @@ module.exports = merge(common, {
         test: /\.ts$/,
         exclude: /node_modules/,
         use: [
-          // Cache intermediate results
-          {loader: 'cache-loader'},
           // Run ts-loader in parallel, leaving one CPU for checker
           {
             loader: 'thread-loader',
@@ -39,9 +40,6 @@ module.exports = merge(common, {
     new webpack.DefinePlugin({
       'process.env.NODE_ENV': JSON.stringify('development'),
     }),
-    // Run ts checker asynchronously
-    new ForkTsCheckerWebpackPlugin({
-      checkSyntacticErrors: true,
-    }),
+    new ForkTsCheckerWebpackPlugin(),
   ],
 });

@@ -13,12 +13,14 @@ import { EFB_WIDTH, EFB_HEIGHT } from '../gx/gx_material';
 import { mat4, quat } from 'gl-matrix';
 import { LoopMode, BMD, BMT, BCK, BTK, BRK } from '../Common/JSYSTEM/J3D/J3DLoader';
 import { GXRenderHelperGfx, fillSceneParamsDataOnTemplate } from '../gx/gx_render';
-import { BasicRenderTarget, ColorTexture, makeClearRenderPassDescriptor, depthClearRenderPassDescriptor, noClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass } from '../gfx/platform/GfxPlatform';
+import { makeClearRenderPassDescriptor, opaqueBlackFullClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
 import { colorNewCopy, OpaqueBlack } from '../Color';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { SceneContext, Destroyable } from '../SceneBase';
 import { createModelInstance } from './scenes';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
+import { executeOnPass, hasAnyVisible } from '../gfx/render/GfxRenderInstManager';
 
 const sjisDecoder = new TextDecoder('sjis')!;
 
@@ -271,12 +273,10 @@ export const enum SMSPass {
 
 export class SunshineRenderer implements Viewer.SceneGfx {
     public renderHelper: GXRenderHelperGfx;
-    public mainRenderTarget = new BasicRenderTarget();
-    public opaqueSceneTexture = new ColorTexture();
     public modelInstances: J3DModelInstanceSimple[] = [];
     public destroyables: Destroyable[] = [];
     public modelCache = new Map<RARC.RARCFile, J3DModelData>();
-    private clearDescriptor = makeClearRenderPassDescriptor(true, colorNewCopy(OpaqueBlack));
+    private clearDescriptor = makeClearRenderPassDescriptor(colorNewCopy(OpaqueBlack));
 
     constructor(device: GfxDevice, public rarc: RARC.JKRArchive) {
         this.renderHelper = new GXRenderHelperGfx(device);
@@ -302,12 +302,12 @@ export class SunshineRenderer implements Viewer.SceneGfx {
         return [renderHacksPanel];
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 
@@ -318,7 +318,7 @@ export class SunshineRenderer implements Viewer.SceneGfx {
             for (let j = 0; j < samplers.length; j++) {
                 const m = this.modelInstances[i].materialInstanceState.textureMappings[j];
                 if (samplers[j].name === "indirectdummy") {
-                    m.gfxTexture = this.opaqueSceneTexture.gfxTexture;
+                    m.lateBinding = 'opaque-scene-texture';
                     m.width = EFB_WIDTH;
                     m.height = EFB_HEIGHT;
                     m.flipY = true;
@@ -327,51 +327,72 @@ export class SunshineRenderer implements Viewer.SceneGfx {
         }
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.mainRenderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        this.opaqueSceneTexture.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-
-        // IndTex.
         this.setIndirectTextureOverride();
 
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
 
-        const skyboxPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, this.clearDescriptor);
-        renderInstManager.setVisibleByFilterKeyExact(SMSPass.SKYBOX);
-        renderInstManager.drawOnPassRenderer(device, skyboxPassRenderer);
-        device.submitPass(skyboxPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
 
-        const opaquePassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor, this.opaqueSceneTexture.gfxTexture);
-        renderInstManager.setVisibleByFilterKeyExact(SMSPass.OPAQUE);
-        renderInstManager.drawOnPassRenderer(device, opaquePassRenderer);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, SMSPass.SKYBOX);
+            });
+        });
 
-        let lastPassRenderer: GfxRenderPass;
-        renderInstManager.setVisibleByFilterKeyExact(SMSPass.INDIRECT);
-        if (renderInstManager.hasAnyVisible()) {
-            device.submitPass(opaquePassRenderer);
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, SMSPass.OPAQUE);
+            });
+        });
 
-            const indTexPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, noClearRenderPassDescriptor);
-            renderInstManager.drawOnPassRenderer(device, indTexPassRenderer);
-            lastPassRenderer = indTexPassRenderer;
-        } else {
-            lastPassRenderer = opaquePassRenderer;
+        if (hasAnyVisible(renderInstManager, SMSPass.INDIRECT)) {
+            builder.pushPass((pass) => {
+                pass.setDebugName('Indirect');
+                pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+                pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+
+                const opaqueSceneTextureID = builder.resolveRenderTarget(mainColorTargetID);
+                pass.attachResolveTexture(opaqueSceneTextureID);
+
+                pass.exec((passRenderer, scope) => {
+                    renderInstManager.setVisibleByFilterKeyExact(SMSPass.INDIRECT);
+                    renderInstManager.simpleRenderInstList!.resolveLateSamplerBinding('opaque-scene-texture', { gfxTexture: scope.getResolveTextureForID(opaqueSceneTextureID), gfxSampler: null, lateBinding: null });
+                    renderInstManager.drawOnPassRenderer(device, passRenderer);
+                });
+            });
         }
 
-        // Window & transparent.
-        renderInstManager.setVisibleByFilterKeyExact(SMSPass.TRANSPARENT);
-        renderInstManager.drawOnPassRenderer(device, lastPassRenderer);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Transparent');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, SMSPass.TRANSPARENT);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return lastPassRenderer;
     }
 
     public destroy(device: GfxDevice) {
         this.renderHelper.destroy(device);
-        this.mainRenderTarget.destroy(device);
-        this.opaqueSceneTexture.destroy(device);
         this.destroyables.forEach((o) => o.destroy(device));
         this.modelInstances.forEach((instance) => instance.destroy(device));
         for (const v of this.modelCache.values())

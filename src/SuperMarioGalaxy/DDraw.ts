@@ -5,12 +5,12 @@
 import * as GX from '../gx/gx_enum';
 import { GX_VtxDesc, GX_VtxAttrFmt, compileLoadedVertexLayout, LoadedVertexLayout } from '../gx/gx_displaylist';
 import { assert, assertExists, align } from '../util';
-import { GfxRenderInstManager, GfxRenderInst } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, GfxRenderInst } from '../gfx/render/GfxRenderInstManager';
 import { GfxDevice, GfxInputLayout, GfxInputState, GfxIndexBufferDescriptor, GfxVertexBufferDescriptor, GfxBuffer, GfxBufferUsage, GfxBufferFrequencyHint, GfxVertexBufferFrequency } from '../gfx/platform/GfxPlatform';
 import { createInputLayout } from '../gx/gx_render';
 import { getTriangleIndexCountForTopologyIndexCount, GfxTopology, convertToTrianglesRange } from '../gfx/helpers/TopologyHelpers';
 import { getSystemEndianness, Endianness } from '../endian';
-import { ReadonlyVec3 } from 'gl-matrix';
+import { ReadonlyVec2, ReadonlyVec3 } from 'gl-matrix';
 import { Color } from '../Color';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 
@@ -72,7 +72,7 @@ class TDDrawVtxSpec {
 
     protected createInputLayoutInternal(device: GfxDevice, cache: GfxRenderCache): boolean {
         if (this.inputLayout === null) {
-            this.inputLayout = createInputLayout(device, cache, this.loadedVertexLayout!, false);
+            this.inputLayout = createInputLayout(device, cache, this.loadedVertexLayout!);
             return true;
         } else {
             return false;
@@ -207,6 +207,10 @@ export class TDDraw extends TDDrawVtxSpec {
         this.writeFloat32(offs + 0x04, t);
     }
 
+    public texCoord2vec2(attr: GX.Attr, v: ReadonlyVec2): void {
+        this.texCoord2f32(attr, v[0], v[1]);
+    }
+
     public color4rgba8(attr: GX.Attr, r: number, g: number, b: number, a: number): void {
         const offs = this.getOffs(this.currentVertex, attr);
         this.writeUint8(offs + 0x00, r);
@@ -232,13 +236,14 @@ export class TDDraw extends TDDrawVtxSpec {
     private flushDeviceObjects(device: GfxDevice, cache: GfxRenderCache): void {
         let recreateInputState = false;
 
-        if (this.createInputLayoutInternal(device, cache)) {
+        if (this.createInputLayoutInternal(device, cache))
             recreateInputState = true;
-        }
+        if (this.inputState === null)
+            recreateInputState = true;
 
         if ((this.recreateVertexBuffer || this.recreateIndexBuffer) && this.startIndex > 0) {
             console.warn(`DDraw: Recreating buffers when render insts already made. This will cause illegal warnings. Use allocatePrimitives() to prevent this.`);
-            debugger;
+            // debugger;
         }
 
         if (this.recreateVertexBuffer) {
@@ -274,6 +279,10 @@ export class TDDraw extends TDDrawVtxSpec {
         }
     }
 
+    public canMakeRenderInst(): boolean {
+        return this.currentIndex > this.startIndex;
+    }
+
     public makeRenderInst(device: GfxDevice, renderInstManager: GfxRenderInstManager): GfxRenderInst {
         this.flushDeviceObjects(device, renderInstManager.gfxRenderCache);
         const renderInst = renderInstManager.newRenderInst();
@@ -285,10 +294,8 @@ export class TDDraw extends TDDrawVtxSpec {
 
     private endAndUploadCache(device: GfxDevice, cache: GfxRenderCache): void {
         this.flushDeviceObjects(device, cache);
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadBufferData(this.vertexBuffer!, 0, new Uint8Array(this.vertexData.buffer));
-        hostAccessPass.uploadBufferData(this.indexBuffer!, 0, new Uint8Array(this.indexData.buffer));
-        device.submitPass(hostAccessPass);
+        device.uploadBufferData(this.vertexBuffer!, 0, new Uint8Array(this.vertexData.buffer));
+        device.uploadBufferData(this.indexBuffer!, 0, new Uint8Array(this.indexData.buffer));
     }
 
     public endAndUpload(device: GfxDevice, renderInstManager: GfxRenderInstManager): void {
@@ -301,12 +308,22 @@ export class TDDraw extends TDDrawVtxSpec {
     }
 
     public destroy(device: GfxDevice): void {
-        if (this.inputState !== null)
+        if (this.inputState !== null) {
             device.destroyInputState(this.inputState);
-        if (this.indexBuffer !== null)
+            this.inputState = null;
+        }
+
+        if (this.indexBuffer !== null) {
             device.destroyBuffer(this.indexBuffer);
-        if (this.vertexBuffer !== null)
+            this.indexBuffer = null;
+            this.recreateIndexBuffer = true;
+        }
+
+        if (this.vertexBuffer !== null) {
             device.destroyBuffer(this.vertexBuffer);
+            this.vertexBuffer = null;
+            this.recreateVertexBuffer = true;
+        }
     }
 }
 
@@ -479,10 +496,8 @@ export class TSDraw extends TDDrawVtxSpec {
 
     public endDraw(device: GfxDevice, cache: GfxRenderCache): void {
         this.flushDeviceObjects(device, cache);
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadBufferData(this.vertexBuffer!, 0, new Uint8Array(this.vertexData.buffer));
-        hostAccessPass.uploadBufferData(this.indexBuffer!, 0, new Uint8Array(this.indexData.buffer));
-        device.submitPass(hostAccessPass);
+        device.uploadBufferData(this.vertexBuffer!, 0, new Uint8Array(this.vertexData.buffer));
+        device.uploadBufferData(this.indexBuffer!, 0, new Uint8Array(this.indexData.buffer));
     }
 
     public destroy(device: GfxDevice): void {

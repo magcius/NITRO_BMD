@@ -1,11 +1,11 @@
 
 import { vec3, mat4, ReadonlyVec3, ReadonlyMat4 } from "gl-matrix";
-import { SceneObjHolder, ResourceHolder, SceneObj } from "./Main";
+import { SceneObjHolder, SceneObj } from "./Main";
 import { NameObj, MovementType } from "./NameObj";
 import { KCollisionServer, CheckCollideResult, KC_PrismData, KCHitSphereClassification } from "./KCollisionServer";
 import { HitSensor } from "./HitSensor";
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { ZoneAndLayer, LiveActor, makeMtxTRSFromActor } from "./LiveActor";
+import { ZoneAndLayer, LiveActor, makeMtxTRSFromActor, ResourceHolder } from "./LiveActor";
 import { assertExists, nArray, assert, arrayRemoveIfExist } from "../util";
 import { transformVec3Mat4w1, transformVec3Mat4w0, isNearZero, isNearZeroVec3, getMatrixTranslation, Vec3Zero } from "../MathHelpers";
 import { connectToScene, vecKillElement } from "./ActorUtil";
@@ -23,6 +23,10 @@ export class Triangle {
     public pos1 = vec3.create();
     public pos2 = vec3.create();
     public faceNormal = vec3.create();
+
+    public calcForceMovePower(dst: vec3, pos: ReadonlyVec3): void {
+        this.collisionParts!.calcForceMovePower(dst, pos);
+    }
 
     public getAttributes(): JMapInfoIter | null {
         if (this.prismIdx !== null)
@@ -114,12 +118,12 @@ export class CollisionParts {
     private setUpdateMtx = true;
     private setUpdateMtxOneTime = false;
 
-    constructor(sceneObjHolder: SceneObjHolder, zoneAndLayer: ZoneAndLayer, initialHostMtx: mat4, public hitSensor: HitSensor, kclData: ArrayBufferSlice, paData: ArrayBufferSlice | null, public keeperIdx: number, private scaleType: CollisionScaleType) {
+    constructor(sceneObjHolder: SceneObjHolder, zoneAndLayer: ZoneAndLayer, initialHostMtx: mat4, public hitSensor: HitSensor, kclData: ArrayBufferSlice, paData: ArrayBufferSlice | null, public category: CollisionKeeperCategory, private scaleType: CollisionScaleType) {
         this.collisionServer = new KCollisionServer(kclData, paData);
 
         sceneObjHolder.create(SceneObj.CollisionDirector);
         const director = assertExists(sceneObjHolder.collisionDirector);
-        this.collisionZone = director.keepers[keeperIdx].getZone(zoneAndLayer.zoneId);
+        this.collisionZone = director.keepers[category].getZone(zoneAndLayer.zoneId);
 
         this.resetAllMtx(initialHostMtx);
         this.collisionServer.calcFarthestVertexDistance();
@@ -178,11 +182,11 @@ export class CollisionParts {
     }
 
     public addToBelongZone(sceneObjHolder: SceneObjHolder): void {
-        sceneObjHolder.collisionDirector!.keepers[this.keeperIdx].addToZone(this, this.collisionZone.zoneId);
+        sceneObjHolder.collisionDirector!.keepers[this.category].addToZone(this, this.collisionZone.zoneId);
     }
 
     public removeFromBelongZone(sceneObjHolder: SceneObjHolder): void {
-        sceneObjHolder.collisionDirector!.keepers[this.keeperIdx].removeFromZone(this, this.collisionZone.zoneId);
+        sceneObjHolder.collisionDirector!.keepers[this.category].removeFromZone(this, this.collisionZone.zoneId);
     }
 
     private makeEqualScale(mtx: mat4): number {
@@ -200,7 +204,7 @@ export class CollisionParts {
             return scratchVec3a[0];
 
         let scale: number;
-        if (this.scaleType === CollisionScaleType.NotUsingScale) {
+        if (this.scaleType === CollisionScaleType.AutoEqualScaleOne) {
             // Invert the scale.
             scale = 1.0;
         } else if (this.scaleType === CollisionScaleType.AutoEqualScale) {
@@ -368,7 +372,7 @@ export class CollisionParts {
     public calcForceMovePower(dst: vec3, pos: ReadonlyVec3): void {
         mat4.invert(scratchMatrix, this.oldWorldMtx);
         transformVec3Mat4w1(dst, scratchMatrix, pos);
-        transformVec3Mat4w1(dst, this.worldMtx, pos);
+        transformVec3Mat4w1(dst, this.worldMtx, dst);
         vec3.sub(dst, dst, pos);
     }
 }
@@ -507,7 +511,7 @@ class CollisionCategorizedKeeper {
     private zones: CollisionZone[] = [];
     private forceCalcMinMaxAndRadius = false;
 
-    constructor(public keeperIdx: number) {
+    constructor(public category: CollisionKeeperCategory) {
     }
 
     public movement(sceneObjHolder: SceneObjHolder): void {
@@ -521,7 +525,7 @@ class CollisionCategorizedKeeper {
                 if (!parts.validated)
                     continue;
 
-                if (this.keeperIdx === parts.keeperIdx)
+                if (this.category === parts.category)
                     parts.updateMtx();
 
                 if (!this.forceCalcMinMaxAndRadius && parts.notMovedCounter === 0)
@@ -799,6 +803,10 @@ export function getFirstPolyOnLineToMap(sceneObjHolder: SceneObjHolder, dst: vec
     return getFirstPolyOnLineCategory(sceneObjHolder, dst, dstTriangle, p0, dir, null, null, CollisionKeeperCategory.Map);
 }
 
+export function getFirstPolyOnLineToWaterSurface(sceneObjHolder: SceneObjHolder, dst: vec3, dstTriangle: Triangle | null, p0: ReadonlyVec3, dir: ReadonlyVec3): boolean {
+    return getFirstPolyOnLineCategory(sceneObjHolder, dst, dstTriangle, p0, dir, null, null, CollisionKeeperCategory.WaterSurface);
+}
+
 export function createCollisionPartsFilterActor(actor: LiveActor): CollisionPartsFilterFunc {
     return (sceneObjHolder: SceneObjHolder, parts: CollisionParts): boolean => {
         return parts.hitSensor.actor === actor;
@@ -828,14 +836,14 @@ export function calcMapGround(sceneObjHolder: SceneObjHolder, dst: vec3, p0: Rea
 
 export const enum CollisionScaleType {
     AutoEqualScale,
-    NotUsingScale,
+    AutoEqualScaleOne,
     AutoScale,
 }
 
 function createCollisionParts(sceneObjHolder: SceneObjHolder, zoneAndLayer: ZoneAndLayer, resourceHolder: ResourceHolder, name: string, hitSensor: HitSensor, initialHostMtx: mat4, scaleType: CollisionScaleType, category: CollisionKeeperCategory): CollisionParts {
     const kclData = assertExists(resourceHolder.arc.findFileData(`${name}.kcl`));
     const paData = resourceHolder.arc.findFileData(`${name}.pa`);
-    return new CollisionParts(sceneObjHolder, zoneAndLayer, initialHostMtx, hitSensor, kclData, paData, category, scaleType);
+    return new CollisionParts(sceneObjHolder, zoneAndLayer, initialHostMtx, assertExists(hitSensor), kclData, paData, category, scaleType);
 }
 
 export function validateCollisionParts(sceneObjHolder: SceneObjHolder, parts: CollisionParts): void {
@@ -974,7 +982,7 @@ export class Binder {
 
     public expandDistance: boolean = false;
     public useMovingReaction: boolean = false;
-    public moveWithCollision: boolean = false;
+    public moveWithCollision: boolean = true;
 
     public hostOffsetVec: ReadonlyVec3 | null = null;
     public fixReactionVec = vec3.create();
@@ -1020,7 +1028,7 @@ export class Binder {
         const vel = vec3.copy(scratchVec3g, actorVelocity);
 
         const expandDistance = this.expandDistance;
-        let ret = this.findBindedPos(sceneObjHolder, pos, vel, expandDistance, false);
+        let ret = this.findBindedPos(sceneObjHolder, pos, vel, false, expandDistance);
         this.expandDistance = false;
 
         if (ret === BinderFindBindedPositionRet.NoCollide) {
@@ -1108,7 +1116,7 @@ export class Binder {
             const dstHitInfo = this.hitInfos[this.hitInfoCount + i];
             dstHitInfo.copy(keeper.strikeInfo[i]);
 
-            if (expandDistance)
+            if (!expandDistance)
                 dstHitInfo.distance += 1.2;
         }
 
@@ -1223,7 +1231,10 @@ export class Binder {
 }
 
 export function isBindedGround(actor: Readonly<LiveActor>): boolean {
-    return actor.binder!.floorHitInfo.distance >= 0.0;
+    if (actor.binder === null)
+        return false;
+
+    return actor.binder.floorHitInfo.distance >= 0.0;
 }
 
 export function isOnGround(actor: LiveActor): boolean {
@@ -1233,15 +1244,28 @@ export function isOnGround(actor: LiveActor): boolean {
     if (actor.binder.floorHitInfo.distance < 0.0)
         return false;
 
-    return vec3.dot(actor.binder.floorHitInfo.faceNormal, actor.velocity) < 0.0;
+    return vec3.dot(actor.binder.floorHitInfo.faceNormal, actor.velocity) <= 0.0;
 }
 
 export function isBindedRoof(actor: LiveActor): boolean {
-    return actor.binder!.ceilingHitInfo.distance >= 0.0;
+    if (actor.binder === null)
+        return false;
+
+    return actor.binder.ceilingHitInfo.distance >= 0.0;
 }
 
 export function isBindedWall(actor: LiveActor): boolean {
-    return actor.binder!.wallHitInfo.distance >= 0.0;
+    if (actor.binder === null)
+        return false;
+
+    return actor.binder.wallHitInfo.distance >= 0.0;
+}
+
+export function isBindedWallOfMoveLimit(actor: LiveActor): boolean {
+    if (!isBindedWall(actor))
+        return false;
+
+    return actor.binder!.wallHitInfo.collisionParts!.category === CollisionKeeperCategory.MoveLimit;
 }
 
 export function isBinded(actor: LiveActor): boolean {
@@ -1292,7 +1316,40 @@ export function isGroundCodeDamageFire(sceneObjHolder: SceneObjHolder, triangle:
     return getGroundCode(sceneObjHolder, triangle) === FloorCode.DamageFire;
 }
 
+export function isGroundCodeWaterBottomH(sceneObjHolder: SceneObjHolder, triangle: Triangle): boolean {
+    return getGroundCode(sceneObjHolder, triangle) === FloorCode.WaterBottomH;
+}
+
+export function isGroundCodeWaterBottomM(sceneObjHolder: SceneObjHolder, triangle: Triangle): boolean {
+    return getGroundCode(sceneObjHolder, triangle) === FloorCode.WaterBottomM;
+}
+
+export function isGroundCodeWaterBottomL(sceneObjHolder: SceneObjHolder, triangle: Triangle): boolean {
+    return getGroundCode(sceneObjHolder, triangle) === FloorCode.WaterBottomL;
+}
+
+export function isGroundCodeAreaMove(sceneObjHolder: SceneObjHolder, triangle: Triangle): boolean {
+    return getGroundCode(sceneObjHolder, triangle) === FloorCode.AreaMove;
+}
+
+export function isGroundCodeRailMove(sceneObjHolder: SceneObjHolder, triangle: Triangle): boolean {
+    const groundCode = getGroundCode(sceneObjHolder, triangle);
+    return groundCode === FloorCode.RailMove;
+}
+
 export function isBindedGroundDamageFire(sceneObjHolder: SceneObjHolder, actor: LiveActor): boolean {
     return isBindedGround(actor) && isGroundCodeDamageFire(sceneObjHolder, actor.binder!.floorHitInfo);
+}
+
+export function isBindedGroundWaterBottomH(sceneObjHolder: SceneObjHolder, actor: LiveActor): boolean {
+    return isBindedGround(actor) && isGroundCodeWaterBottomH(sceneObjHolder, actor.binder!.floorHitInfo);
+}
+
+export function isBindedGroundWaterBottomM(sceneObjHolder: SceneObjHolder, actor: LiveActor): boolean {
+    return isBindedGround(actor) && isGroundCodeWaterBottomM(sceneObjHolder, actor.binder!.floorHitInfo);
+}
+
+export function isBindedGroundWaterBottomL(sceneObjHolder: SceneObjHolder, actor: LiveActor): boolean {
+    return isBindedGround(actor) && isGroundCodeWaterBottomL(sceneObjHolder, actor.binder!.floorHitInfo);
 }
 //#endregion

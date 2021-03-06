@@ -17,7 +17,7 @@ import { mat4 } from 'gl-matrix';
 import AnimationController from '../AnimationController';
 import { SceneContext } from '../SceneBase';
 import { MathConstants } from "../MathHelpers";
-import { maybeDecompress } from '../Common/Compression/LzS';
+import { maybeDecompress } from './LzS';
 
 const pathBase = `mm3d`;
 

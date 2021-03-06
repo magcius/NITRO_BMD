@@ -7,20 +7,21 @@ import * as NARC from './narc';
 
 import { DataFetcher } from '../DataFetcher';
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass } from '../gfx/platform/GfxPlatform';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
 import { MDL0Renderer, G3DPass, nnsG3dBindingLayouts } from './render';
 import { assert, readString, assertExists } from '../util';
-import { BasicRenderTarget, standardFullClearRenderPassDescriptor, depthClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers';
 import { FakeTextureHolder } from '../TextureHolder';
 import { mat4 } from 'gl-matrix';
 import AnimationController from '../AnimationController';
 import { computeModelMatrixSRT, MathConstants } from '../MathHelpers';
-import { GfxRenderInstManager } from '../gfx/render/GfxRenderer';
-import { GfxRenderDynamicUniformBuffer } from '../gfx/render/GfxRenderDynamicUniformBuffer';
+import { executeOnPass } from '../gfx/render/GfxRenderInstManager';
 import { SceneContext } from '../SceneBase';
 import { fx32, parseNSBMD, SRT0, parseNSBTA, parseNSBTP, PAT0, parseNSBTX } from './NNS_G3D';
 import { fillMatrix4x4 } from '../gfx/helpers/UniformBufferHelpers';
 import { NITRO_Program } from '../SuperMario64DS/render';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 
 const pathBase = `mkds`;
 class ModelCache {
@@ -64,63 +65,71 @@ class ModelCache {
 }
 
 export class MKDSRenderer implements Viewer.SceneGfx {
-    public renderTarget = new BasicRenderTarget();
-    public renderInstManager = new GfxRenderInstManager();
-    public uniformBuffer: GfxRenderDynamicUniformBuffer;
+    private renderHelper: GfxRenderHelper;
 
     public textureHolder: FakeTextureHolder;
     public objectRenderers: MDL0Renderer[] = [];
 
     constructor(device: GfxDevice, public courseRenderer: MDL0Renderer, public skyboxRenderer: MDL0Renderer | null) {
-        this.uniformBuffer = new GfxRenderDynamicUniformBuffer(device);
+        this.renderHelper = new GfxRenderHelper(device);
         this.textureHolder = new FakeTextureHolder(this.courseRenderer.viewerTextures);
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
-        const template = this.renderInstManager.pushTemplateRenderInst();
-        template.setUniformBuffer(this.uniformBuffer);
+    private prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
+        const template = this.renderHelper.pushTemplateRenderInst();
+        const renderInstManager = this.renderHelper.renderInstManager;
 
         template.setBindingLayouts(nnsG3dBindingLayouts);
         let offs = template.allocateUniformBuffer(NITRO_Program.ub_SceneParams, 16);
         const sceneParamsMapped = template.mapUniformBufferF32(NITRO_Program.ub_SceneParams);
         offs += fillMatrix4x4(sceneParamsMapped, offs, viewerInput.camera.projectionMatrix);
 
-        this.courseRenderer.prepareToRender(this.renderInstManager, viewerInput);
+        this.courseRenderer.prepareToRender(renderInstManager, viewerInput);
         if (this.skyboxRenderer !== null)
-            this.skyboxRenderer.prepareToRender(this.renderInstManager, viewerInput);
+            this.skyboxRenderer.prepareToRender(renderInstManager, viewerInput);
         for (let i = 0; i < this.objectRenderers.length; i++)
-            this.objectRenderers[i].prepareToRender(this.renderInstManager, viewerInput);
-        this.renderInstManager.popTemplateRenderInst();
+            this.objectRenderers[i].prepareToRender(renderInstManager, viewerInput);
+        renderInstManager.popTemplateRenderInst();
 
-        this.uniformBuffer.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
-        // First, render the skybox.
-        const skyboxPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        this.renderInstManager.setVisibleByFilterKeyExact(G3DPass.SKYBOX);
-        this.renderInstManager.drawOnPassRenderer(device, skyboxPassRenderer);
-        device.submitPass(skyboxPassRenderer);
-        // Now do main pass.
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor);
-        this.renderInstManager.setVisibleByFilterKeyExact(G3DPass.MAIN);
-        this.renderInstManager.drawOnPassRenderer(device, mainPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, G3DPass.SKYBOX);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, G3DPass.MAIN);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        this.renderInstManager.resetRenderInsts();
-
-        return mainPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice) {
-        this.renderInstManager.destroy(device);
-        this.renderTarget.destroy(device);
-        this.uniformBuffer.destroy(device);
+        this.renderHelper.destroy(device);
 
         this.courseRenderer.destroy(device);
         if (this.skyboxRenderer !== null)

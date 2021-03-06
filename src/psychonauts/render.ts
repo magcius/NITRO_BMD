@@ -3,7 +3,7 @@
 import program_glsl from './program.glsl';
 import { TextureHolder, LoadedTexture, TextureMapping } from "../TextureHolder";
 import { PPAK_Texture, TextureFormat, getTextureFormatName } from "./ppf";
-import { GfxDevice, GfxFormat, GfxBufferUsage, GfxBuffer, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxVertexBufferDescriptor, GfxBufferFrequencyHint, GfxBindingLayoutDescriptor, GfxProgram, GfxHostAccessPass, GfxSampler, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxTextureDimension, GfxRenderPass, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from "../gfx/platform/GfxPlatform";
+import { GfxDevice, GfxFormat, GfxBufferUsage, GfxBuffer, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxVertexBufferDescriptor, GfxBufferFrequencyHint, GfxBindingLayoutDescriptor, GfxProgram, GfxSampler, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxTextureDimension, GfxRenderPass, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from "../gfx/platform/GfxPlatform";
 import * as Viewer from "../viewer";
 import { decompressBC, DecodedSurfaceSW, surfaceToCanvas } from "../Common/bc_texture";
 import { EMeshFrag, EMesh, EScene, EDomain } from "./plb";
@@ -14,10 +14,11 @@ import { fillMatrix4x3, fillMatrix4x4 } from "../gfx/helpers/UniformBufferHelper
 import { mat4 } from "gl-matrix";
 import { computeViewMatrix, Camera } from "../Camera";
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
 import { nArray, assertExists } from "../util";
-import { standardFullClearRenderPassDescriptor, BasicRenderTarget } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 function decodeTextureData(format: TextureFormat, width: number, height: number, pixels: Uint8Array): DecodedSurfaceSW {
     switch (format) {
@@ -65,9 +66,8 @@ export class PsychonautsTextureHolder extends TextureHolder<PPAK_Texture> {
         }
 
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, texture.mipData.length));
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, levelDatas);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, levelDatas);
 
         const extraInfo = new Map<string, string>();
         extraInfo.set('Format', getTextureFormatName(texture.format));
@@ -367,7 +367,6 @@ export class SceneRenderer {
 }
 
 export class PsychonautsRenderer {
-    public renderTarget = new BasicRenderTarget();
     public clearRenderPassDescriptor = standardFullClearRenderPassDescriptor;
 
     public textureHolder = new PsychonautsTextureHolder();
@@ -383,31 +382,41 @@ export class PsychonautsRenderer {
         this.sceneRenderers.push(sceneRenderer);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.renderHelper.pushTemplateRenderInst();
         for (let i = 0; i < this.sceneRenderers.length; i++)
             this.sceneRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const finalPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.clearRenderPassDescriptor);
-        this.renderHelper.renderInstManager.drawOnPassRenderer(device, finalPassRenderer);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.clearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.clearRenderPassDescriptor);
 
-        this.renderHelper.renderInstManager.resetRenderInsts();
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        return finalPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         this.textureHolder.destroy(device);
         for (let i = 0; i < this.sceneRenderers.length; i++)
             this.sceneRenderers[i].destroy(device);

@@ -4,7 +4,7 @@ import { mat4, vec3 } from "gl-matrix";
 import { parseMatrix, parseMaterial, Material, RenderOptionsFlags } from "./Common";
 import { MaterialRenderer } from "../MaterialRenderer";
 import { GfxDevice } from "../../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../../viewer";
 import { RendererStore } from "../Scenes";
 import { drawWorldSpaceText, getDebugOverlayCanvas2D } from "../../DebugJunk";
@@ -176,8 +176,8 @@ export class UVMDRenderer {
             let angle = Math.atan2(vecToCam[1], vecToCam[0]);
 
             // TODO: check that this is accurate to how it's done in the game, some of the objects seem weirdly skewed at certain angles?
-            let xlen = Math.sqrt(placementMatrix[0] * placementMatrix[0] + placementMatrix[1] * placementMatrix[1]);
-            let ylen = Math.sqrt(placementMatrix[4] * placementMatrix[4] + placementMatrix[5] * placementMatrix[5]);
+            let xlen = Math.hypot(placementMatrix[0], placementMatrix[1]);
+            let ylen = Math.hypot(placementMatrix[4], placementMatrix[5]);
             placementMatrix[0] = Math.sin(angle) * xlen;
             placementMatrix[1] = -Math.cos(angle) * xlen;
             placementMatrix[4] = Math.cos(angle) * ylen;

@@ -75,8 +75,10 @@ export const enum Attr {
     TEX5 = 18,
     TEX6 = 19,
     TEX7 = 20,
-    NBT = 25,
-    MAX = NBT,
+    MAX = TEX7,
+    // NOTE: NBT is a fake API entry-point for GX! It's listed here in case some tools
+    // use it as serialization, but you should always switch to NRM in your high-level code.
+    _NBT = 25,
     NULL = 0xFF,
 }
 

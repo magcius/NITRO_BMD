@@ -4,24 +4,17 @@
     <meta charset="utf8">
     <title>noclip</title>
     <meta name="description" content="A digital museum of video game levels">
-    <link rel="icon" sizes="16x16" href="<%= require('./assets/icon.png') %>">
-    <link rel="icon" sizes="64x64" href="<%= require('./assets/logo.png') %>">
+    <link rel="icon" sizes="16x16" href="<%= require('./assets/icon.png').default %>">
+    <link rel="icon" sizes="64x64" href="<%= require('./assets/logo.png').default %>">
     <style>
         @font-face {
             font-family: 'fontello';
             font-weight: normal;
             font-style: normal;
-            src: url('<%= require("./assets/fontello.woff2") %>') format('woff2');
+            src: url('<%= require("./assets/fontello.woff2").default %>') format('woff2');
         }
         html, body { margin: 0; overflow: hidden; font-size: 100%; }
     </style>
-    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-35480078-3"></script>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-        window.gtag = function(){dataLayer.push(arguments);}
-        gtag('js', new Date());
-        gtag('config', 'UA-35480078-3');
-    </script>
 </head>
 <body>
 </body>

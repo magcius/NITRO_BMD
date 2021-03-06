@@ -1,7 +1,7 @@
 
 import ArrayBufferSlice from "../../ArrayBufferSlice";
 import * as BYML from "../../byml";
-import * as Yaz0 from './Yaz0_NoWASM';
+import * as Yaz0 from '../../Common/Compression/Yaz0';
 import { openSync, readSync, closeSync, readFileSync, writeFileSync, readdirSync } from "fs";
 import { assertExists, hexzero, assert, readString } from "../../util";
 import { Endianness } from "../../endian";
@@ -172,7 +172,7 @@ class REL {
 
         let buffer = fetchDataSync(relFilename);
         if (readString(buffer, 0x00, 0x04) === 'Yaz0')
-            buffer = Yaz0.decompress(buffer);
+            buffer = Yaz0.decompressSW(buffer);
 
         this.buffer = buffer;
 

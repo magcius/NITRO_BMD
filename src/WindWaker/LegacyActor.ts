@@ -6,7 +6,7 @@ import { WindWakerRenderer, ZWWExtraTextures, dGlobals } from "./zww_scenes";
 import { mat4, vec3 } from "gl-matrix";
 import { J3DModelData } from '../Common/JSYSTEM/J3D/J3DGraphBase';
 import { J3DModelInstanceSimple } from '../Common/JSYSTEM/J3D/J3DGraphSimple';
-import { GfxRendererLayer } from '../gfx/render/GfxRenderer';
+import { GfxRendererLayer } from '../gfx/render/GfxRenderInstManager';
 import { LoopMode, ANK1, TTK1, TRK1, TPT1 } from '../Common/JSYSTEM/J3D/J3DLoader';
 import { assertExists, hexzero, leftPad } from '../util';
 import { ResType, ResEntry, ResAssetType } from './d_resorce';
@@ -17,8 +17,8 @@ import { LightType, dKy_tevstr_init, dKy_tevstr_c, settingTevStruct, setLightTev
 import { JPABaseEmitter } from '../Common/JSYSTEM/JPA';
 import { fpc__ProcessName, fopAcM_prm_class, fopAc_ac_c, cPhs__Status, fGlobals, fpcPf__RegisterFallback } from './framework';
 import { ScreenSpaceProjection, computeScreenSpaceProjectionFromWorldSpaceAABB } from '../Camera';
-import { GfxDevice } from '../gfx/platform/GfxPlatform';
-import { GfxRenderInstManager } from '../gfx/render/GfxRenderer';
+import { GfxCullMode, GfxDevice } from '../gfx/platform/GfxPlatform';
+import { GfxRenderInstManager } from '../gfx/render/GfxRenderInstManager';
 import { cBgS_GndChk } from './d_bg';
 
 const scratchMat4a = mat4.create();
@@ -173,9 +173,7 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
     }
 
     function createEmitter(context: WindWakerRenderer, resourceId: number): JPABaseEmitter {
-        const emitter = context.effectSystem!.createBaseEmitter(context.device, context.renderCache, resourceId);
-        // TODO(jstpierre): Scale, Rotation
-        return emitter;
+        return globals.particleCtrl.set(globals, 0, resourceId, null)!;
     }
 
     const objName = assertExists(globals.dStage_searchName(actorName));
@@ -1226,7 +1224,7 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
     else if (actorName === 'Oq') fetchArchive(`Oq`).then((rarc) => buildModel(rarc, `bmdm/oq.bmd`).bindANK1(parseBCK(rarc, `bck/nom_wait.bck`)));
     else if (actorName === 'Oqw') fetchArchive(`Oq`).then((rarc) => buildModel(rarc, `bmdm/red_oq.bmd`).bindANK1(parseBCK(rarc, `bck/umi_new_wait.bck`)));
     else if (actorName === 'Daiocta') fetchArchive(`Daiocta`).then((rarc) => buildModel(rarc, `bdlm/do_main1.bdl`).bindANK1(parseBCK(rarc, `bck/wait1.bck`)));
-    else if (actorName === 'Fmastr1' || name == 'Fmastr2') fetchArchive(`fm`).then((rarc) => { 
+    else if (actorName === 'Fmastr1' || actorName === 'Fmastr2') fetchArchive(`fm`).then((rarc) => { 
         buildModel(rarc, `bdl/fm.bdl`).bindANK1(parseBCK(rarc, `bcks/wait.bck`));
         const holeModel = buildModel(rarc, `bdlm/ypit00.bdl`);
         holeModel.bindTTK1(parseBTK(rarc, `btk/ypit00.btk`));
@@ -1235,7 +1233,7 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
     });
     else if (actorName === 'magtail') fetchArchive(`Mt`).then((rarc) => buildModel(rarc, `bdlm/mg_head.bdl`).bindANK1(parseBCK(rarc, `bck/wait1.bck`)));
     // Red and Blue Bubbles
-    else if (name === 'bable') fetchArchive(`Bl`).then((rarc) => {
+    else if (actorName === 'bable') fetchArchive(`Bl`).then((rarc) => {
         const m = buildModel(rarc, `bdlm/bl.bdl`);
 
         const bubbleType = (actor.parameters & 0x000000FF);
@@ -1368,7 +1366,7 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
         // TODO(jstpierre): animation?
     });
     // ChuChus
-    else if (actorName === 'c_green' || actorName === 'c_red' || actorName === 'c_blue' || name == 'c_black' || name == 'c_kiiro') fetchArchive(`Cc`).then((rarc) => {
+    else if (actorName === 'c_green' || actorName === 'c_red' || actorName === 'c_blue' || actorName === 'c_black' || actorName === 'c_kiiro') fetchArchive(`Cc`).then((rarc) => {
         const cc = buildModel(rarc, `bmdm/cc.bmd`);
         cc.bindANK1(parseBCK(rarc, `bck/tachi_walk.bck`));
 
@@ -1565,7 +1563,7 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
         const burningGroundEmitter = createEmitter(renderer, 0x461);
         const ringOfFlamesEmitter = createEmitter(renderer, 0x462);
         setModelMatrix(scratchMat4a);
-        vec3.set(scratchVec3a, 0, 0, 0);
+        vec3.zero(scratchVec3a);
         vec3.transformMat4(scratchVec3a, scratchVec3a, scratchMat4a);
         vec3.copy(burningGroundEmitter.globalTranslation, scratchVec3a);
         vec3.copy(ringOfFlamesEmitter.globalTranslation, scratchVec3a);
@@ -1771,6 +1769,24 @@ function spawnLegacyActor(globals: dGlobals, legacy: d_a_noclip_legacy, actor: f
         // Misc. gameplay data
     } else if (actorName === 'Akabe') {
         // Collision
+    } else if (actorName === 'Link') {
+        (async() => {
+            const rarc = await fetchArchive(`Link`);
+            const anm = await fetchArchive(`LkAnm`);
+
+            const model = getResData(ResType.Model, rarc, `bdl/cl.bdl`);
+            const modelInstance = new J3DModelInstanceSimple(model);
+            // aup(modelInstance);
+            renderer.extraTextures.fillExtraTextures(modelInstance);
+            const cl = new d_a_py_lk(renderer.globals, modelInstance);
+            dKy_tevstr_init(cl.tevstr, actor.roomNo);
+            setModelMatrix(cl.modelMatrix);
+            setToNearestFloor(cl.modelMatrix, cl.modelMatrix);
+            legacy.objectRenderers.push(cl);
+            cl.layer = actor.layer;
+        
+            (window as any).cl = cl;
+        })();
     } else {
         const dbgName = globals.objNameGetDbgName(objName);
         console.warn(`Unknown obj: ${actorName} / ${dbgName} / Room ${actor.roomNo} Layer ${actor.layer}`);
@@ -1869,4 +1885,77 @@ export class BMDObjectRenderer {
 
 export function LegacyActor__RegisterFallbackConstructor(globals: fGlobals): void {
     fpcPf__RegisterFallback(globals, d_a_noclip_legacy);
+}
+
+
+class d_a_py_lk extends BMDObjectRenderer {
+    private damNames = ['eyeL', 'eyeR', 'mayuL', 'mayuR'];
+
+    constructor(private globals: dGlobals, modelInstance: J3DModelInstanceSimple) {
+        super(modelInstance);
+
+        this.modelInstance.setSortKeyLayer(GfxRendererLayer.OPAQUE + 5, false);
+
+        this.modelInstance.bindANK1(globals.resCtrl.getResByName(ResType.Bck, 'LkAnm', 'wait.bck', globals.resCtrl.resObj));
+
+        this.setupDam();
+    }
+
+    private faceAnimController = new AnimationController(30);
+    private anime(btp: number, btk: number): void {
+        // const arc = this.globals.resCtrl.findResInfo('LkAnm', this.globals.resCtrl.resObj)!;
+        // console.log(`Btp: ${arc.getResEntryByIndex(ResType.Btp, btp).file.name}  Btk: ${arc.getResEntryByIndex(ResType.Btk, btk).file.name}`);
+        this.modelInstance.bindTPT1(this.globals.resCtrl.getObjectRes(ResType.Btp, 'LkAnm', btp), this.faceAnimController);
+        this.modelInstance.bindTTK1(this.globals.resCtrl.getObjectRes(ResType.Btk, 'LkAnm', btk), this.faceAnimController);
+
+        this.setupDamTexNo();
+        this.faceAnimController.setPhaseToCurrent();
+    }
+
+    public prepareToRender(globals: dGlobals, device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
+        this.faceAnimController.setTimeFromViewerInput(viewerInput);
+
+        const hatMaterial = this.modelInstance.materialInstances[18];
+        hatMaterial.visible = false;
+
+        super.prepareToRender(globals, device, renderInstManager, viewerInput);
+
+        renderInstManager.setCurrentRenderInstList(globals.dlst.hat);
+        hatMaterial.visible = true;
+        hatMaterial.materialHelper.megaStateFlags.cullMode = GfxCullMode.NONE;
+        hatMaterial.setAlphaWriteEnabled(true);
+        hatMaterial.prepareToRenderShapes(device, renderInstManager, 0, viewerInput.camera, viewerInput.viewport, this.modelInstance.modelData, this.modelInstance.materialInstanceState, this.modelInstance.shapeInstanceState);
+    }
+
+    private setupDamTexNo(): void {
+        for (const pref of this.damNames) {
+            const mat = this.modelInstance.materialInstances.find((m) => m.name === pref)!;
+            const damA = this.modelInstance.materialInstances.find((m) => m.name === `${pref}damA`)!;
+            const damB = this.modelInstance.materialInstances.find((m) => m.name === `${pref}damB`)!;
+
+            for (let i = 0; i < mat.texNoCalc.length; i++) {
+                damA.texNoCalc[i] = mat.texNoCalc[i];
+                damB.texNoCalc[i] = mat.texNoCalc[i];
+            }
+        }
+    }
+
+    private setupDam(): void {
+        for (const pref of this.damNames) {
+            const mat = this.modelInstance.materialInstances.find((m) => m.name === pref)!;
+
+            const damA = this.modelInstance.materialInstances.find((m) => m.name === `${pref}damA`)!;
+            const damB = this.modelInstance.materialInstances.find((m) => m.name === `${pref}damB`)!;
+            // Needs to render before Link.
+            damA.setSortKeyLayer(GfxRendererLayer.OPAQUE + 4, false);
+            damA.setColorWriteEnabled(false);
+            damA.setAlphaWriteEnabled(true);
+
+            mat.setSortKeyLayer(GfxRendererLayer.OPAQUE + 6, false);
+
+            damB.setSortKeyLayer(GfxRendererLayer.OPAQUE + 7, false);
+            damB.setColorWriteEnabled(false);
+            damB.setAlphaWriteEnabled(true);
+        }
+    }
 }

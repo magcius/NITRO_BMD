@@ -1,6 +1,6 @@
 
-import { vec4, vec3, mat4 } from "gl-matrix";
-import { fallbackUndefined, assert, decodeString, assertExists } from "../util";
+import { vec4, vec3, mat4, ReadonlyVec4 } from "gl-matrix";
+import { assert, decodeString, assertExists, nullify } from "../util";
 
 import { J3DModelData, ShapeData, prepareShapeMtxGroup } from "../Common/JSYSTEM/J3D/J3DGraphBase";
 import { LiveActor } from "./LiveActor";
@@ -18,7 +18,7 @@ import { TextureMapping } from "../TextureHolder";
 import { Shape } from "../Common/JSYSTEM/J3D/J3DLoader";
 import { GXShapeHelperGfx, GXMaterialHelperGfx, MaterialParams, PacketParams, ColorKind } from "../gx/gx_render";
 import { coalesceBuffer } from "../gfx/helpers/BufferHelpers";
-import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { GXMaterialBuilder } from "../gx/GXMaterialBuilder";
 import { ViewerRenderInput } from "../viewer";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
@@ -75,7 +75,7 @@ function parseColor(dst: Color, S: string): void {
 }
 
 function initFurParamFromDVD(dstParam: FurParam, dstDynParam: DynamicFurParam, furTxt: ArrayBufferSlice): void {
-    const S = decodeString(furTxt, 'sjis');
+    const S = decodeString(furTxt, undefined, undefined, 'sjis');
 
     dstParam.numLayers               = parseInt  (scanForLine(S, `レイヤ数`), 10);
     dstParam.hairLengthTip              = parseFloat(scanForLine(S, `毛長さ`));
@@ -169,7 +169,7 @@ class CLayerParam {
     }
 }
 
-function createFurDensityMap(mapDensity: vec4, mapThickness: vec4, mapMixingRatio: vec4): BTI_Texture {
+function createFurDensityMap(mapDensity: ReadonlyVec4, mapThickness: ReadonlyVec4, mapMixingRatio: ReadonlyVec4): BTI_Texture {
     // Creates the density map from the given params.
     const width = 0x20, height = 0x20;
     const format = GX.TexFormat.IA8;
@@ -198,7 +198,7 @@ function createFurDensityMap(mapDensity: vec4, mapThickness: vec4, mapMixingRati
     }
 
     const btiTexture: BTI_Texture = {
-        name,
+        name: 'FurDensityMap',
         width, height, format, wrapS, wrapT,
         minFilter: GX.TexFilter.LINEAR,
         magFilter: GX.TexFilter.LINEAR,
@@ -211,7 +211,7 @@ function createFurDensityMap(mapDensity: vec4, mapThickness: vec4, mapMixingRati
     return btiTexture;
 }
 
-function calcFurVertexData(shape: Shape, lengthMap: BTI_Texture | null, maxLength: number): ArrayBuffer {
+function calcFurVertexData(shape: Shape, lengthMap: BTI_Texture | null, maxLength: number): ArrayBufferLike {
     const loadedVertexLayout = shape.loadedVertexLayout;
 
     // Create a new vertex array with the data we want.
@@ -580,7 +580,7 @@ class FurBank {
     public furMultis: FurMulti[] = [];
 
     public check(modelData: J3DModelData, materialBits: number): FurMulti | null {
-        return fallbackUndefined(this.furMultis.find((multi) => multi.modelData === modelData && (multi.materialBits & materialBits) === materialBits), null);
+        return nullify(this.furMultis.find((multi) => multi.modelData === modelData && (multi.materialBits & materialBits) === materialBits));
     }
 
     public regist(multi: FurMulti): void {

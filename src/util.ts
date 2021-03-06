@@ -19,22 +19,36 @@ export function nullify<T>(v: T | undefined | null): T | null {
     return v === undefined ? null : v;
 }
 
-export function readString(buffer: ArrayBufferSlice, offs: number, length: number = -1, nulTerminated: boolean = true): string {
+export function readString(buffer: ArrayBufferSlice, offs: number, length: number = -1, nulTerminated: boolean = true, encoding: string | null = null): string {
+    const buf = buffer.createTypedArray(Uint8Array, offs);
+    let byteLength = 0;
+    while (true) {
+        if (length >= 0 && byteLength >= length)
+            break;
+        if (nulTerminated && buf[byteLength] === 0)
+            break;
+        byteLength++;
+    }
+
+    if (byteLength === 0)
+        return "";
+
+    if (encoding !== null) {
+        return decodeString(buffer, offs, byteLength, encoding);
+    } else {
+        return copyBufferToString(buffer, offs, byteLength);
+    }
+}
+
+function copyBufferToString(buffer: ArrayBufferSlice, offs: number, byteLength: number): string {
     const buf = buffer.createTypedArray(Uint8Array, offs);
     let S = '';
-    let i = 0;
-    while (true) {
-        if (length >= 0 && i >= length)
-            break;
-        if (nulTerminated && buf[i] === 0)
-            break;
+    for (let i = 0; i < byteLength; i++)
         S += String.fromCharCode(buf[i]);
-        i++;
-    }
     return S;
 }
 
-export function decodeString(buffer: ArrayBufferSlice, encoding = 'utf8'): string {
+export function decodeString(buffer: ArrayBufferSlice, offs: number | undefined = undefined, byteLength: number | undefined = undefined, encoding = 'utf8'): string {
     // ts-ignore here is required for node / tool builds, which doesn't specify TextDecoder.
     // TODO(jstpierre): Support both node and browser through a different method, since
     // I think this might pull in iconv-lite to the web build...
@@ -42,13 +56,13 @@ export function decodeString(buffer: ArrayBufferSlice, encoding = 'utf8'): strin
     // @ts-ignore
     if (typeof TextDecoder !== 'undefined') {
         // @ts-ignore
-        return new TextDecoder(encoding)!.decode(buffer.copyToBuffer());
+        return new TextDecoder(encoding)!.decode(buffer.copyToBuffer(offs, byteLength));
     // @ts-ignore
     } else if (typeof require !== 'undefined') {
         // @ts-ignore
         const iconv = require('iconv-lite');
         // @ts-ignore
-        return iconv.decode(Buffer.from(buffer.copyToBuffer()), encoding);
+        return iconv.decode(Buffer.from(buffer.copyToBuffer(offs, byteLength)), encoding);
     } else {
         throw "whoops";
     }
@@ -184,4 +198,12 @@ export function bisectRight<T>(L: T[], e: T, compare: (a: T, b: T) => number): n
 export function spliceBisectRight<T>(L: T[], e: T, compare: (a: T, b: T) => number): void {
     const idx = bisectRight(L, e, compare);
     L.splice(idx, 0, e);
+}
+
+export function setBitFlagEnabled(v: number, mask: number, enabled: boolean): number {
+    if (enabled)
+        v |= mask;
+    else
+        v &= ~mask;
+    return v;
 }

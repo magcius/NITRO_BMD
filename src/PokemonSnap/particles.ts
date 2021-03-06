@@ -6,7 +6,7 @@ import { TexCM } from "../Common/N64/Image";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
 import { GfxBuffer, GfxBufferUsage, GfxDevice, GfxFormat, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxInputState, GfxSampler, GfxTexture, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxBindingLayoutDescriptor, GfxProgram, GfxMegaStateDescriptor, GfxCompareMode, GfxBlendMode, GfxBlendFactor, GfxCullMode } from "../gfx/platform/GfxPlatform";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../gfx/render/GfxRenderInstManager";
 import { clamp, lerp, MathConstants, normToLength, normToLengthAndAdd, transformVec3Mat4w0, Vec3Zero, Vec3UnitX } from "../MathHelpers";
 import { DeviceProgram } from "../Program";
 import { align, assert, hexzero, nArray } from "../util";

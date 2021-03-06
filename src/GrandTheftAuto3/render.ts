@@ -5,17 +5,17 @@ import * as rw from "librw";
 // @ts-ignore
 import program_glsl from './program.glsl';
 import { TextureMapping, TextureBase } from "../TextureHolder";
-import { GfxDevice, GfxFormat, GfxBufferUsage, GfxBuffer, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxProgram, GfxHostAccessPass, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxTextureDimension, GfxRenderPass, GfxMegaStateDescriptor, GfxBlendMode, GfxBlendFactor, GfxBindingLayoutDescriptor, GfxCullMode, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, GfxInputLayoutDescriptor } from "../gfx/platform/GfxPlatform";
+import { GfxDevice, GfxFormat, GfxBufferUsage, GfxBuffer, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxProgram, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxTextureDimension, GfxRenderPass, GfxMegaStateDescriptor, GfxBlendMode, GfxBlendFactor, GfxBindingLayoutDescriptor, GfxCullMode, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, GfxInputLayoutDescriptor } from "../gfx/platform/GfxPlatform";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
 import { DeviceProgram } from "../Program";
 import { convertToTriangleIndexBuffer, filterDegenerateTriangleIndexBuffer, GfxTopology } from "../gfx/helpers/TopologyHelpers";
 import { fillMatrix4x3, fillMatrix4x4, fillColor } from "../gfx/helpers/UniformBufferHelpers";
-import { mat4, quat, vec3, vec2, vec4 } from "gl-matrix";
-import { computeViewSpaceDepthFromWorldSpaceAABB, FPSCameraController, CameraController } from "../Camera";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
+import { mat4, quat, vec3, vec2 } from "gl-matrix";
+import { computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from "../Camera";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
 import { assert } from "../util";
-import { BasicRenderTarget, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth, GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { ItemInstance, ObjectDefinition } from "./item";
 import { colorNewFromRGBA, White, colorNewCopy, Color, colorCopy } from "../Color";
 import { ColorSet, emptyColorSet, lerpColorSet } from "./time";
@@ -23,6 +23,7 @@ import { AABB } from "../Geometry";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers";
 import { GraphObjBase } from "../SceneBase";
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from "../gfx/render/GfxRenderGraph";
 
 const TIME_FACTOR = 2500; // one day cycle per minute
 const DRAW_DISTANCE_FACTOR = 2.5;
@@ -148,9 +149,8 @@ export class TextureArray extends TextureMapping {
             dimension: GfxTextureDimension.n2DArray, pixelFormat,
             width, height, depth: textures.length, numLevels: mipmaps.length
         });
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, mipmaps);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, mipmaps);
 
         this.gfxTexture = gfxTexture;
         this.width = width;
@@ -612,7 +612,6 @@ export class GTA3Renderer implements Viewer.SceneGfx {
     public renderers: GraphObjBase[] = [];
     public onstatechanged!: () => void;
 
-    private renderTarget = new BasicRenderTarget();
     private clearRenderPassDescriptor = standardFullClearRenderPassDescriptor;
     private currentColors = emptyColorSet();
     public renderHelper: GfxRenderHelper;
@@ -627,7 +626,7 @@ export class GTA3Renderer implements Viewer.SceneGfx {
         c.setSceneMoveSpeedMult(0.01);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const t = viewerInput.time / TIME_FACTOR * this.weatherPeriods / 24;
         const cs1 = this.colorSets[Math.floor(t)   % this.weatherPeriods + this.weatherPeriods * this.weather];
         const cs2 = this.colorSets[Math.floor(t+1) % this.weatherPeriods + this.weatherPeriods * this.weather];
@@ -663,21 +662,32 @@ export class GTA3Renderer implements Viewer.SceneGfx {
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const finalPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.clearRenderPassDescriptor);
-        this.renderHelper.renderInstManager.drawOnPassRenderer(device, finalPassRenderer);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.clearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.clearRenderPassDescriptor);
 
-        this.renderHelper.renderInstManager.resetRenderInsts();
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        return finalPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public createPanels(): UI.Panel[] {
@@ -705,7 +715,6 @@ export class GTA3Renderer implements Viewer.SceneGfx {
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         for (let i = 0; i < this.renderers.length; i++)
             this.renderers[i].destroy(device);
     }

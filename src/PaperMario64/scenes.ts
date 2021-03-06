@@ -1,17 +1,18 @@
 
 import * as Viewer from '../viewer';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPassDescriptor, GfxRenderPass } from '../gfx/platform/GfxPlatform';
+import { GfxDevice, GfxRenderPassDescriptor } from '../gfx/platform/GfxPlatform';
 import * as MapShape from './map_shape';
 import * as Tex from './tex';
 import { PaperMario64TextureHolder, PaperMario64ModelTreeRenderer, BackgroundBillboardRenderer } from './render';
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { makeClearRenderPassDescriptor, BasicRenderTarget } from '../gfx/helpers/RenderTargetHelpers';
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
 import { OpaqueBlack, Color } from '../Color';
 import * as BYML from '../byml';
 import { ScriptExecutor } from './script';
 import { SceneContext } from '../SceneBase';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { CameraController } from '../Camera';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const pathBase = `pm64`;
 
@@ -23,19 +24,18 @@ class PaperMario64Renderer implements Viewer.SceneGfx {
     public bgTextureRenderer: BackgroundBillboardRenderer | null = null;
     public scriptExecutor: ScriptExecutor | null = null;
 
-    public renderTarget = new BasicRenderTarget();
     public renderHelper: GfxRenderHelper;
 
     constructor(device: GfxDevice) {
         this.renderHelper = new GfxRenderHelper(device);
-        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(true, OpaqueBlack);
+        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(OpaqueBlack);
     }
 
     public adjustCameraController(c: CameraController) {
         c.setSceneMoveSpeedMult(8/60);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.renderHelper.pushTemplateRenderInst();
 
         if (this.scriptExecutor !== null)
@@ -46,25 +46,36 @@ class PaperMario64Renderer implements Viewer.SceneGfx {
             this.modelTreeRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.clearRenderPassDescriptor);
-        renderInstManager.drawOnPassRenderer(device, passRenderer);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
+
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.clearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.clearRenderPassDescriptor);
+
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return passRenderer;
     }
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         this.textureHolder.destroy(device);
         if (this.bgTextureRenderer !== null)
             this.bgTextureRenderer.destroy(device);
@@ -74,7 +85,7 @@ class PaperMario64Renderer implements Viewer.SceneGfx {
 
     // ScriptHost
     public setBGColor(color: Color): void {
-        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(true, color);
+        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(color);
     }
 
     public setModelTexAnimGroupEnabled(modelId: number, enabled: boolean): void {

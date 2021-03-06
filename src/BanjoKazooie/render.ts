@@ -10,7 +10,7 @@ import { fillMatrix4x4, fillMatrix4x3, fillMatrix4x2, fillVec4, fillVec4v } from
 import { mat4, vec3, vec4, vec2 } from 'gl-matrix';
 import { computeViewMatrix, computeViewMatrixSkybox } from '../Camera';
 import { TextureMapping } from '../TextureHolder';
-import { GfxRenderInstManager, setSortKeyDepthKey, setSortKeyDepth } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, setSortKeyDepthKey, setSortKeyDepth } from '../gfx/render/GfxRenderInstManager';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { TextFilt } from '../Common/N64/Image';
 import { Geometry, VertexAnimationEffect, VertexEffectType, GeoNode, Bone, AnimationSetup, TextureAnimationSetup, GeoFlags, isSelector, isSorter } from './geo';
@@ -46,7 +46,7 @@ layout(std140) uniform ub_DrawParams {
     Mat4x2 u_TexMatrix[2];
 };
 
-uniform ub_CombineParameters {
+layout(std140) uniform ub_CombineParameters {
     vec4 u_PrimColor;
     vec4 u_EnvColor;
 #ifdef EXTRA_COMBINE
@@ -133,13 +133,6 @@ void main() {
         if (RDP.getCycleTypeFromOtherModeH(DP_OtherModeH) === RDP.OtherModeH_CycleType.G_CYC_2CYCLE)
             this.defines.set("TWO_CYCLE", "1");
         this.frag = this.generateFrag(combParams);
-
-        // let twoCycle = RDP.getCycleTypeFromOtherModeH(DP_OtherModeH) === RDP.OtherModeH_CycleType.G_CYC_2CYCLE;
-        // if (RDP.combineParamsUseCombinedInFirstCycle(combParams) || RDP.combineParamsUseT1InFirstCycle(combParams)) {
-        //     console.log(RDP.generateCombineParamsString(combParams, twoCycle));
-        // } else if (twoCycle && RDP.combineParamsUseTexelsInSecondCycle(combParams)) {
-        //     console.log(RDP.generateCombineParamsString(combParams, twoCycle));
-        // }
     }
 
     private generateClamp(): string {
@@ -889,7 +882,7 @@ export class GeometryData {
     public dynamic: boolean;
 
     // forget any game specific data in the geometry, for now
-    constructor(device: GfxDevice, cache: GfxRenderCache, public geo: Geometry<GeoNode>, private id = 0) {
+    constructor(device: GfxDevice, cache: GfxRenderCache, public geo: Geometry<GeoNode>, private id = -1) {
         this.renderData = new RenderData(device, cache, geo.sharedOutput);
         this.dynamic = geo.vertexEffects.length > 0 || geo.vertexBoneTable !== null || (geo.softwareLighting !== undefined && geo.softwareLighting.length > 0) || !!geo.morphs;
     }
@@ -1443,11 +1436,9 @@ export class GeometryRenderer {
                 }
             }
         }
-        if (this.geometryData.dynamic) {
-            const hostAccessPass = device.createHostAccessPass();
-            hostAccessPass.uploadBufferData(this.vertexBuffer, 0, new Uint8Array(this.vertexBufferData.buffer));
-            device.submitPass(hostAccessPass);
-        }
+
+        if (this.geometryData.dynamic)
+            device.uploadBufferData(this.vertexBuffer, 0, new Uint8Array(this.vertexBufferData.buffer));
 
         // reset sort state
         xluSortScratch.key = 0;

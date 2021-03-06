@@ -30,9 +30,7 @@ export function coalesceBuffer(device: GfxDevice, usage: GfxBufferUsage, datas: 
         byteOffset += data.byteLength;
     }
 
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadBufferData(buffer, 0, combinedData);
-    device.submitPass(hostAccessPass);
+    device.uploadBufferData(buffer, 0, combinedData);
 
     return coalescedBuffers;
 }
@@ -110,18 +108,14 @@ export class GfxBufferCoalescerCombo {
     }
 }
 
-export function makeStaticDataBuffer(device: GfxDevice, usage: GfxBufferUsage, data: ArrayBuffer): GfxBuffer {
+export function makeStaticDataBuffer(device: GfxDevice, usage: GfxBufferUsage, data: ArrayBufferLike): GfxBuffer {
     const gfxBuffer = device.createBuffer(align(data.byteLength, 4) / 4, usage, GfxBufferFrequencyHint.STATIC);
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadBufferData(gfxBuffer, 0, new Uint8Array(data));
-    device.submitPass(hostAccessPass);
+    device.uploadBufferData(gfxBuffer, 0, new Uint8Array(data));
     return gfxBuffer;
 }
 
 export function makeStaticDataBufferFromSlice(device: GfxDevice, usage: GfxBufferUsage, data: ArrayBufferSlice): GfxBuffer {
     const gfxBuffer = device.createBuffer(align(data.byteLength, 4) / 4, usage, GfxBufferFrequencyHint.STATIC);
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadBufferData(gfxBuffer, 0, data.createTypedArray(Uint8Array));
-    device.submitPass(hostAccessPass);
+    device.uploadBufferData(gfxBuffer, 0, data.createTypedArray(Uint8Array));
     return gfxBuffer;
 }

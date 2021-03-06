@@ -2,11 +2,11 @@ import * as UI from '../ui';
 import * as Viewer from '../viewer';
 import * as BYML from '../byml';
 
-import { GfxDevice, GfxRenderPass, GfxHostAccessPass } from '../gfx/platform/GfxPlatform';
-import { BasicRenderTarget, opaqueBlackFullClearRenderPassDescriptor, depthClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
+import { opaqueBlackFullClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { SceneContext } from '../SceneBase';
-import { executeOnPass } from '../gfx/render/GfxRenderer';
+import { executeOnPass } from '../gfx/render/GfxRenderInstManager';
 import { SnapPass, ModelRenderer, buildTransform } from './render';
 import { LevelArchive, parseLevel, isActor, eggInputSetup } from './room';
 import { RenderData, textureToCanvas } from '../BanjoKazooie/render';
@@ -15,6 +15,7 @@ import { hexzero } from '../util';
 import { CameraController } from '../Camera';
 import { createActor, LevelGlobals, sceneActorInit } from './actor';
 import { ParticleManager } from './particles';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const pathBase = `PokemonSnap`;
 
@@ -22,7 +23,6 @@ class SnapRenderer implements Viewer.SceneGfx {
     public renderData: RenderData[] = [];
     public modelRenderers: ModelRenderer[] = [];
 
-    public renderTarget = new BasicRenderTarget();
     public renderHelper: GfxRenderHelper;
     public globals: LevelGlobals;
 
@@ -73,10 +73,24 @@ class SnapRenderer implements Viewer.SceneGfx {
         };
         renderHacksPanel.contents.appendChild(enableAlphaVisualizer.elem);
 
-        return [renderHacksPanel];
+        const controlsPanel = new UI.Panel();
+        controlsPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
+        controlsPanel.setTitle(UI.TIME_OF_DAY_ICON, 'Interactions');
+        const throwBalls = new UI.Checkbox('Throw Balls', true);
+        throwBalls.onchanged = () => {
+            this.globals.throwBalls = throwBalls.checked;
+        };
+        controlsPanel.contents.appendChild(throwBalls.elem);
+        const playFlute = new UI.Checkbox('Play Flute', false);
+        playFlute.onchanged = () => {
+            this.globals.playFlute = playFlute.checked;
+        };
+        controlsPanel.contents.appendChild(playFlute.elem);
+
+        return [renderHacksPanel, controlsPanel];
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.globals.update(viewerInput);
         this.renderHelper.pushTemplateRenderInst();
         for (let i = 0; i < this.modelRenderers.length; i++)
@@ -84,31 +98,44 @@ class SnapRenderer implements Viewer.SceneGfx {
         this.globals.particles.prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const skyboxPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, opaqueBlackFullClearRenderPassDescriptor);
-        executeOnPass(renderInstManager, device, skyboxPassRenderer, SnapPass.SKYBOX);
-        device.submitPass(skyboxPassRenderer);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
 
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor);
-        executeOnPass(renderInstManager, device, mainPassRenderer, SnapPass.MAIN);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, SnapPass.SKYBOX);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, SnapPass.MAIN);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-
-        return mainPassRenderer;
     }
 
     public destroy(device: GfxDevice): void {
-        this.renderTarget.destroy(device);
         this.renderHelper.destroy(device);
         for (let i = 0; i < this.renderData.length; i++)
             this.renderData[i].destroy(device);

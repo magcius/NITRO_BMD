@@ -7,7 +7,7 @@ import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
 import { setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers";
 import { fillMatrix4x4, fillVec4v } from "../gfx/helpers/UniformBufferHelpers";
 import { GfxBlendFactor, GfxBlendMode, GfxBuffer, GfxBufferUsage, GfxCompareMode, GfxCullMode, GfxDevice, GfxFormat, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxInputState, GfxMegaStateDescriptor, GfxProgram, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency } from "../gfx/platform/GfxPlatform";
-import { GfxRendererLayer, GfxRenderInstManager, makeSortKey, setSortKeyDepth } from "../gfx/render/GfxRenderer";
+import { GfxRendererLayer, GfxRenderInstManager, makeSortKey, setSortKeyDepth } from "../gfx/render/GfxRenderInstManager";
 import { DeviceProgram } from "../Program";
 import { ViewerRenderInput } from "../viewer";
 import { Filesystem } from "./Filesystem";

@@ -6,7 +6,7 @@ import { UVMD, UVMDRenderer } from "./UVMD";
 import { Material, parseMaterial } from "./Common";
 import { MaterialRenderer } from "../MaterialRenderer";
 import { GfxDevice } from "../../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../../viewer";
 import { RendererStore } from "../Scenes";
 import * as RDP from '../../Common/N64/RDP';

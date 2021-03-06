@@ -1,15 +1,14 @@
 
-import { nArray, assert, assertExists, spliceBisectRight } from "../../util";
+import { nArray, assert, assertExists, spliceBisectRight, setBitFlagEnabled } from "../../util";
 import { clamp } from "../../MathHelpers";
 
-import { GfxMegaStateDescriptor, GfxInputState, GfxDevice, GfxRenderPass, GfxRenderPipelineDescriptor, GfxPrimitiveTopology, GfxBindingLayoutDescriptor, GfxBindingsDescriptor, GfxBindings, GfxSamplerBinding, GfxProgram, GfxInputLayout, GfxBuffer, GfxRenderPipeline } from "../platform/GfxPlatform";
-import { gfxRenderPipelineDescriptorEquals, gfxBindingsDescriptorEquals } from "../platform/GfxPlatformUtil";
+import { GfxMegaStateDescriptor, GfxInputState, GfxDevice, GfxRenderPass, GfxRenderPipelineDescriptor, GfxPrimitiveTopology, GfxBindingLayoutDescriptor, GfxBindingsDescriptor, GfxSamplerBinding, GfxProgram, GfxInputLayout, GfxFormat, GfxRenderPassDescriptor } from "../platform/GfxPlatform";
 
 import { defaultMegaState, copyMegaState, setMegaStateFlags } from "../helpers/GfxMegaStateDescriptorHelpers";
-import { DEFAULT_NUM_SAMPLES } from "../helpers/RenderTargetHelpers";
 
 import { GfxRenderCache } from "./GfxRenderCache";
 import { GfxRenderDynamicUniformBuffer } from "./GfxRenderDynamicUniformBuffer";
+import { IS_DEVELOPMENT } from "../../BuildVersion";
 
 // The "Render" subsystem is a high-level scene graph, built on top of gfx/platform and gfx/helpers.
 // A rough overview of the design:
@@ -132,48 +131,21 @@ export function getSortKeyDepth(sortKey: number): number {
 }
 //#endregion
 
-//#region GfxRendererTransientState
-interface GfxRendererTransientState {
-    currentRenderPipelineDescriptor: GfxRenderPipelineDescriptor | null;
-    currentRenderPipelineReady: boolean;
-    currentInputState: GfxInputState | null;
-    currentBindingDescriptor: GfxBindingsDescriptor | null;
-    currentBindings: GfxBindings | null;
-}
-
-function gfxRendererTransientStateReset(state: GfxRendererTransientState): void {
-    state.currentRenderPipelineDescriptor = null;
-    state.currentRenderPipelineReady = false;
-    state.currentInputState = null;
-    state.currentBindingDescriptor = null;
-    state.currentBindings = null;
-}
-
-export function gfxRendererTransientStateNew(): GfxRendererTransientState {
-    return {
-        currentRenderPipelineDescriptor: null,
-        currentRenderPipelineReady: false,
-        currentInputState: null,
-        currentBindingDescriptor: null,
-        currentBindings: null,
-    };
-}
-
-const defaultTransientState = gfxRendererTransientStateNew();
-//#endregion
-
 //#region GfxRenderInst
 // TODO(jstpierre): Very little of this is used, could be removed.
 const enum GfxRenderInstFlags {
     Indexed = 1 << 0,
+    AllowSkippingIfPipelineNotReady = 1 << 1,
 
     // Mostly for error checking.
-    Template = 1 << 1,
-    Draw = 1 << 2,
+    Template = 1 << 2,
+    Draw = 1 << 3,
 
     // Which flags are inherited from templates...
-    InheritedFlags = Indexed,
+    InheritedFlags = Indexed | AllowSkippingIfPipelineNotReady,
 }
+
+const SET_DEBUG_POINTER = IS_DEVELOPMENT;
 
 export class GfxRenderInst {
     public sortKey: number = 0;
@@ -182,7 +154,6 @@ export class GfxRenderInst {
 
     // Pipeline building.
     private _renderPipelineDescriptor: GfxRenderPipelineDescriptor;
-    private _renderPipeline: GfxRenderPipeline | null = null;
 
     // Bindings building.
     private _uniformBuffer: GfxRenderDynamicUniformBuffer;
@@ -202,9 +173,12 @@ export class GfxRenderInst {
             megaStateDescriptor: copyMegaState(defaultMegaState),
             program: null!,
             topology: GfxPrimitiveTopology.TRIANGLES,
-            // TODO(jstpierre): Not great, need to figure out how to not do this...
-            sampleCount: DEFAULT_NUM_SAMPLES,
+            colorAttachmentFormats: [],
+            depthStencilAttachmentFormat: null,
+            sampleCount: 1,
         };
+
+        this.reset();
     }
 
     /**
@@ -216,7 +190,9 @@ export class GfxRenderInst {
     public reset(): void {
         this.sortKey = 0;
         this.filterKey = 0;
-        this._renderPipeline = null;
+        this._flags = GfxRenderInstFlags.AllowSkippingIfPipelineNotReady;
+        this._inputState = null;
+        this._renderPipelineDescriptor.inputLayout = null;
     }
 
     /**
@@ -230,7 +206,11 @@ export class GfxRenderInst {
         this._renderPipelineDescriptor.program = o._renderPipelineDescriptor.program;
         this._renderPipelineDescriptor.inputLayout = o._renderPipelineDescriptor.inputLayout;
         this._renderPipelineDescriptor.topology = o._renderPipelineDescriptor.topology;
-        this._renderPipeline = o._renderPipeline;
+        this._renderPipelineDescriptor.colorAttachmentFormats.length = Math.max(this._renderPipelineDescriptor.colorAttachmentFormats.length, o._renderPipelineDescriptor.colorAttachmentFormats.length);
+        for (let i = 0; i < o._renderPipelineDescriptor.colorAttachmentFormats.length; i++)
+            this._renderPipelineDescriptor.colorAttachmentFormats[i] = o._renderPipelineDescriptor.colorAttachmentFormats[i];
+        this._renderPipelineDescriptor.depthStencilAttachmentFormat = o._renderPipelineDescriptor.depthStencilAttachmentFormat;
+        this._renderPipelineDescriptor.sampleCount = o._renderPipelineDescriptor.sampleCount;
         this._inputState = o._inputState;
         this._uniformBuffer = o._uniformBuffer;
         this._drawCount = o._drawCount;
@@ -247,15 +227,6 @@ export class GfxRenderInst {
         this.setSamplerBindingsFromTextureMappings(obd.samplerBindings);
         for (let i = 0; i < o._dynamicUniformBufferByteOffsets.length; i++)
             this._dynamicUniformBufferByteOffsets[i] = o._dynamicUniformBufferByteOffsets[i];
-    }
-
-    /**
-     * Set the {@see GfxPipeline} used by this render inst directly. Use this if you already have a pipeline object
-     * pre-constructed. Otherwise, you can use {@see setGfxProgram}, {@see setMegaStateFlags},
-     * {@see setInputLayoutAndState} and {@see setBindingLayouts} to construct a pipeline automatically.
-     */
-    public setGfxRenderPipeline(pipeline: GfxRenderPipeline): void {
-        this._renderPipeline = pipeline;
     }
 
     /**
@@ -302,7 +273,7 @@ export class GfxRenderInst {
         this._bindingDescriptors[0].bindingLayout = bindingLayout;
 
         for (let i = this._bindingDescriptors[0].uniformBufferBindings.length; i < bindingLayout.numUniformBuffers; i++)
-            this._bindingDescriptors[0].uniformBufferBindings.push({ buffer: null!, wordCount: 0, wordOffset: 0 });
+            this._bindingDescriptors[0].uniformBufferBindings.push({ buffer: null!, wordCount: 0 });
         for (let i = this._bindingDescriptors[0].samplerBindings.length; i < bindingLayout.numSamplers; i++)
             this._bindingDescriptors[0].samplerBindings.push({ gfxSampler: null, gfxTexture: null, lateBinding: null });
     }
@@ -317,20 +288,21 @@ export class GfxRenderInst {
     }
 
     public drawIndexes(indexCount: number, indexStart: number = 0): void {
-        this._flags |= GfxRenderInstFlags.Indexed;
+        this._flags = setBitFlagEnabled(this._flags, GfxRenderInstFlags.Indexed, true);
         this._drawCount = indexCount;
         this._drawStart = indexStart;
         this._drawInstanceCount = 1;
     }
 
     public drawIndexesInstanced(indexCount: number, instanceCount: number, indexStart: number = 0): void {
-        this._flags |= GfxRenderInstFlags.Indexed;
+        this._flags = setBitFlagEnabled(this._flags, GfxRenderInstFlags.Indexed, true);
         this._drawCount = indexCount;
         this._drawStart = indexStart;
         this._drawInstanceCount = instanceCount;
     }
 
     public drawPrimitives(primitiveCount: number, primitiveStart: number = 0): void {
+        this._flags = setBitFlagEnabled(this._flags, GfxRenderInstFlags.Indexed, false);
         this._drawCount = primitiveCount;
         this._drawStart = primitiveStart;
         this._drawInstanceCount = 1;
@@ -351,10 +323,8 @@ export class GfxRenderInst {
         this._dynamicUniformBufferByteOffsets[bufferIndex] = this._uniformBuffer.allocateChunk(wordCount) << 2;
 
         const dst = this._bindingDescriptors[0].uniformBufferBindings[bufferIndex];
-        dst.wordOffset = 0;
         dst.wordCount = wordCount;
-        const wordOffset = this._dynamicUniformBufferByteOffsets[bufferIndex] >>> 2;
-        return wordOffset;
+        return this.getUniformBufferOffset(bufferIndex);
     }
 
     /**
@@ -375,7 +345,6 @@ export class GfxRenderInst {
         this._dynamicUniformBufferByteOffsets[bufferIndex] = wordOffset << 2;
 
         const dst = this._bindingDescriptors[0].uniformBufferBindings[bufferIndex];
-        dst.wordOffset = 0;
         dst.wordCount = wordCount;
     }
 
@@ -401,9 +370,9 @@ export class GfxRenderInst {
      * Sets the {@param GfxSamplerBinding}s in use by this render instance.
      *
      * Note that {@see GfxRenderInst} has a method of doing late binding, intended to solve cases where live render
-     * targets are used, which can have difficult control flow consequences for users of GfxRenderer. Pass a string
-     * instead of a GfxSamplerBinding to record that it can be resolved later, and use
-     * {@see GfxRenderInst.resolveLateSamplerBinding} or equivalent to fill it in later.
+     * targets are used, which can have difficult control flow consequences for users. Pass a string instead of a
+     * GfxSamplerBinding to record that it can be resolved later, and use {@see GfxRenderInst.resolveLateSamplerBinding}
+     * or equivalent to fill it in later.
      */
     public setSamplerBindingsFromTextureMappings(m: (GfxSamplerBinding | null)[]): void {
         for (let i = 0; i < this._bindingDescriptors[0].samplerBindings.length; i++) {
@@ -423,6 +392,16 @@ export class GfxRenderInst {
         }
     }
 
+    public hasLateSamplerBinding(name: string): boolean {
+        for (let i = 0; i < this._bindingDescriptors[0].samplerBindings.length; i++) {
+            const dst = this._bindingDescriptors[0].samplerBindings[i];
+            if (dst.lateBinding === name)
+                return true;
+        }
+
+        return false;
+    }
+
     /**
      * Resolve a previously registered "late bound" sampler binding for the given {@param name} to the provided
      * {@param binding}, as registered through {@see setSamplerBindingsFromTextureMappings}.
@@ -440,7 +419,8 @@ export class GfxRenderInst {
                 } else {
                     assert(binding.lateBinding === null);
                     dst.gfxTexture = binding.gfxTexture;
-                    dst.gfxSampler = binding.gfxSampler;
+                    if (binding.gfxSampler !== null)
+                        dst.gfxSampler = binding.gfxSampler;
                 }
 
                 dst.lateBinding = null;
@@ -448,70 +428,56 @@ export class GfxRenderInst {
         }
     }
 
-    public drawOnPassWithState(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass, state: GfxRendererTransientState): void {
-        assert(!!(this._flags & GfxRenderInstFlags.Draw));
+    /**
+     * Tests whether the underlying pipeline for this {@see GfxRenderInst} is ready.
+     *
+     * By default, {@see GfxRenderInstManager} will skip any insts with non-ready pipelines. If you wish
+     * to override this and force the render inst to draw, please use {@see setAllowSkippingIfPipelineNotReady}.
+     */
+    public queryPipelineReady(device: GfxDevice, cache: GfxRenderCache): boolean {
+        const gfxPipeline = cache.createRenderPipeline(device, this._renderPipelineDescriptor);
+        return device.queryPipelineReady(gfxPipeline);
+    }
 
-        if (this._renderPipeline !== null) {
-            state.currentRenderPipelineDescriptor = null;
-            const ready = device.queryPipelineReady(this._renderPipeline);
-            assert(ready);
-            passRenderer.setPipeline(this._renderPipeline);
-        } else {
-            if (state.currentRenderPipelineDescriptor === null || !gfxRenderPipelineDescriptorEquals(this._renderPipelineDescriptor, state.currentRenderPipelineDescriptor)) {
-                state.currentRenderPipelineDescriptor = this._renderPipelineDescriptor;
-                const gfxPipeline = cache.createRenderPipeline(device, state.currentRenderPipelineDescriptor);
-                state.currentRenderPipelineReady = device.queryPipelineReady(gfxPipeline);
-                if (!state.currentRenderPipelineReady)
-                    return;
+    /**
+     * Sets whether this render inst should be skipped if the render pipeline isn't ready.
+     *
+     * Some draws of objects can be skipped if the pipelines aren't ready. Others are more
+     * crucial to draw, and so this can be set to force for the pipeline to become available.
+     *
+     * By default, this is true.
+     */
+    public setAllowSkippingIfPipelineNotReady(v: boolean): void {
+        this._flags = setBitFlagEnabled(this._flags, GfxRenderInstFlags.AllowSkippingIfPipelineNotReady, v);
+    }
 
-                passRenderer.setPipeline(gfxPipeline);
-            } else {
-                if (!state.currentRenderPipelineReady)
-                    return;
-            }
-        }
+    private setAttachmentFormatsFromRenderPass(device: GfxDevice, passRenderer: GfxRenderPass): void {
+        const passDescriptor = device.queryRenderPass(passRenderer);
 
-        if (this._inputState !== state.currentInputState) {
-            state.currentInputState = this._inputState;
-            passRenderer.setInputState(state.currentInputState);
-        }
+        const colorAttachmentDescriptor = passDescriptor.colorAttachment !== null ? device.queryRenderTarget(passDescriptor.colorAttachment) : null;
+        const depthStencilAttachmentDescriptor = passDescriptor.depthStencilAttachment !== null ? device.queryRenderTarget(passDescriptor.depthStencilAttachment) : null;
 
-        for (let i = 0; i < this._bindingDescriptors[0].uniformBufferBindings.length; i++)
-            this._bindingDescriptors[0].uniformBufferBindings[i].buffer = this._uniformBuffer.gfxBuffer!;
-
-        if (state.currentBindingDescriptor === null || !gfxBindingsDescriptorEquals(this._bindingDescriptors[0], state.currentBindingDescriptor)) {
-            state.currentBindingDescriptor = this._bindingDescriptors[0];
-            state.currentBindings = cache.createBindings(device, state.currentBindingDescriptor);
-        }
-
-        passRenderer.setBindings(0, assertExists(state.currentBindings), this._dynamicUniformBufferByteOffsets);
-
-        if (this._drawInstanceCount > 1) {
-            assert(!!(this._flags & GfxRenderInstFlags.Indexed));
-            passRenderer.drawIndexedInstanced(this._drawCount, this._drawCount, this._drawInstanceCount);
-        } else if ((this._flags & GfxRenderInstFlags.Indexed)) {
-            passRenderer.drawIndexed(this._drawCount, this._drawStart);
-        } else {
-            passRenderer.draw(this._drawCount, this._drawStart);
-        }
+        this._renderPipelineDescriptor.colorAttachmentFormats[0] = colorAttachmentDescriptor !== null ? colorAttachmentDescriptor.pixelFormat : null;
+        this._renderPipelineDescriptor.depthStencilAttachmentFormat = depthStencilAttachmentDescriptor !== null ? depthStencilAttachmentDescriptor.pixelFormat : null;
+        this._renderPipelineDescriptor.sampleCount = colorAttachmentDescriptor !== null ? colorAttachmentDescriptor.sampleCount : depthStencilAttachmentDescriptor !== null ? depthStencilAttachmentDescriptor.sampleCount : 0;
     }
 
     public drawOnPass(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass): boolean {
-        assert(!!(this._flags & GfxRenderInstFlags.Draw));
+        this.setAttachmentFormatsFromRenderPass(device, passRenderer);
 
-        if (this._renderPipeline !== null) {
-            passRenderer.setPipeline(this._renderPipeline);
-        } else {
-            const gfxPipeline = cache.createRenderPipeline(device, this._renderPipelineDescriptor);
-            if (!device.queryPipelineReady(gfxPipeline))
-                return false;
-            passRenderer.setPipeline(gfxPipeline);
-        }
+        const gfxPipeline = cache.createRenderPipeline(device, this._renderPipelineDescriptor);
+        if (!!(this._flags & GfxRenderInstFlags.AllowSkippingIfPipelineNotReady) && !device.queryPipelineReady(gfxPipeline))
+            return false;
+
+        if (SET_DEBUG_POINTER)
+            passRenderer.setDebugPointer(this);
+
+        passRenderer.setPipeline(gfxPipeline);
 
         passRenderer.setInputState(this._inputState);
 
         for (let i = 0; i < this._bindingDescriptors[0].uniformBufferBindings.length; i++)
-            this._bindingDescriptors[0].uniformBufferBindings[i].buffer = this._uniformBuffer.gfxBuffer!;
+            this._bindingDescriptors[0].uniformBufferBindings[i].buffer = this._uniformBuffer.gfxUniformBuffer!;
 
         // TODO(jstpierre): Support multiple binding descriptors.
         const gfxBindings = cache.createBindings(device, this._bindingDescriptors[0]);
@@ -519,7 +485,7 @@ export class GfxRenderInst {
 
         if (this._drawInstanceCount > 1) {
             assert(!!(this._flags & GfxRenderInstFlags.Indexed));
-            passRenderer.drawIndexedInstanced(this._drawCount, this._drawCount, this._drawInstanceCount);
+            passRenderer.drawIndexedInstanced(this._drawCount, this._drawStart, this._drawInstanceCount);
         } else if ((this._flags & GfxRenderInstFlags.Indexed)) {
             passRenderer.drawIndexed(this._drawCount, this._drawStart);
         } else {
@@ -580,6 +546,13 @@ export class GfxRenderInstList {
         this.checkUsePostSort();
     }
 
+    public hasLateSamplerBinding(name: string): boolean {
+        for (let i = 0; i < this.renderInsts.length; i++)
+            if (this.renderInsts[i].hasLateSamplerBinding(name))
+                return true;
+        return false;
+    }
+
     /**
      * Resolve sampler bindings for all render insts on this render inst list. See the
      * documentation for {@see GfxRenderInst.resolveLateSamplerBinding}.
@@ -589,12 +562,7 @@ export class GfxRenderInstList {
             this.renderInsts[i].resolveLateSamplerBinding(name, binding);
     }
 
-    /**
-     * Execute all scheduled render insts in this list onto the {@param GfxRenderPass},
-     * using {@param device} and {@param cache} to create any device-specific resources
-     * necessary to complete the draws.
-     */
-    public drawOnPassRenderer(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass, state: GfxRendererTransientState | null = null): void {
+    private drawOnPassRendererNoReset(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass): void {
         if (this.renderInsts.length === 0)
             return;
 
@@ -603,23 +571,27 @@ export class GfxRenderInstList {
             this.usePostSort = false;
         }
 
-        // TODO(jstpierre): Remove this?
-        if (state === null) {
-            gfxRendererTransientStateReset(defaultTransientState);
-            state = defaultTransientState;
-        }
-
         if (this.executionOrder === GfxRenderInstExecutionOrder.Forwards) {
             for (let i = 0; i < this.renderInsts.length; i++)
-                this.renderInsts[i].drawOnPassWithState(device, cache, passRenderer, state);
+                this.renderInsts[i].drawOnPass(device, cache, passRenderer);
         } else {
             for (let i = this.renderInsts.length - 1; i >= 0; i--)
-                this.renderInsts[i].drawOnPassWithState(device, cache, passRenderer, state);
+                this.renderInsts[i].drawOnPass(device, cache, passRenderer);
         }
     }
 
     public reset(): void {
         this.renderInsts.length = 0;
+    }
+
+    /**
+     * Execute all scheduled render insts in this list onto the {@param GfxRenderPass},
+     * using {@param device} and {@param cache} to create any device-specific resources
+     * necessary to complete the draws.
+     */
+    public drawOnPassRenderer(device: GfxDevice, cache: GfxRenderCache, passRenderer: GfxRenderPass): void {
+        this.drawOnPassRendererNoReset(device, cache, passRenderer);
+        this.reset();
     }
 }
 //#endregion
@@ -627,7 +599,7 @@ export class GfxRenderInstList {
 //#region GfxRenderInstManager
 
 // Basic linear pool allocator.
-class GfxRenderInstPool {
+class RenderInstPool {
     // The pool contains all render insts that we've ever created.
     public pool: GfxRenderInst[] = [];
     // The number of render insts currently allocated out to the user.
@@ -648,7 +620,7 @@ class GfxRenderInstPool {
 
     public reset(): void {
         for (let i = 0; i < this.pool.length; i++)
-            this.pool[i]._flags = 0;
+            this.pool[i].reset();
         this.allocCount = 0;
     }
 
@@ -659,12 +631,13 @@ class GfxRenderInstPool {
 }
 
 export class GfxRenderInstManager {
-    // TODO(jstpierre): Share these caches between scenes.
-    public gfxRenderCache = new GfxRenderCache();
-    public instPool = new GfxRenderInstPool();
-    public templatePool = new GfxRenderInstPool();
+    public instPool = new RenderInstPool();
+    public templatePool = new RenderInstPool();
     public simpleRenderInstList: GfxRenderInstList | null = new GfxRenderInstList();
     private currentRenderInstList: GfxRenderInstList = this.simpleRenderInstList!;
+
+    constructor(public device: GfxDevice, public gfxRenderCache: GfxRenderCache) {
+    }
 
     /**
      * Creates a new {@see GfxRenderInst} object and returns it. If there is a template
@@ -677,9 +650,6 @@ export class GfxRenderInstManager {
         const renderInst = this.instPool.pool[renderInstIndex];
         if (templateIndex >= 0)
             renderInst.setFromTemplate(this.templatePool.pool[templateIndex]);
-        else
-            renderInst.reset();
-        renderInst._flags |= GfxRenderInstFlags.Draw;
         return renderInst;
     }
 
@@ -689,6 +659,7 @@ export class GfxRenderInstManager {
      * after submitting it.
      */
     public submitRenderInst(renderInst: GfxRenderInst): void {
+        renderInst._flags |= GfxRenderInstFlags.Draw;
         this.currentRenderInstList.insertSorted(renderInst);
     }
 
@@ -702,19 +673,6 @@ export class GfxRenderInstManager {
     public setCurrentRenderInstList(list: GfxRenderInstList): void {
         assert(this.simpleRenderInstList === null);
         this.currentRenderInstList = list;
-    }
-
-    /**
-     * Returns a render instance to the pool after being used. This should be
-     * used in scenarios where the render inst is not submitted to any draw lists,
-     * like calling {@param drawOnPass} manually on the render inst.
-     */
-    public returnRenderInst(renderInst: GfxRenderInst): void {
-        renderInst._flags = 0;
-
-        // We leave it completely dead for now, since we don't expect to see too many "returned" instances.
-        // That said, if this is ever a memory pressure, we can have allocRenderInst allocate from dead items
-        // again...
     }
 
     /**
@@ -771,6 +729,14 @@ export class GfxRenderInstManager {
         this.simpleRenderInstList = null;
     }
 
+    /**
+     * Execute all scheduled render insts in {@param list} onto the {@param GfxRenderPass},
+     * using {@param device} and {@param cache} to create any device-specific resources
+     * necessary to complete the draws.
+     */
+    public drawListOnPassRenderer(list: GfxRenderInstList, passRenderer: GfxRenderPass): void {
+        list.drawOnPassRenderer(this.device, this.gfxRenderCache, passRenderer);
+    }
     //#region Legacy render inst list management API.
 
     /**
@@ -803,9 +769,9 @@ export class GfxRenderInstManager {
         list.renderInsts.length = 0;
     }
 
-    public drawOnPassRenderer(device: GfxDevice, passRenderer: GfxRenderPass, state: GfxRendererTransientState | null = null): void {
+    public drawOnPassRenderer(device: GfxDevice, passRenderer: GfxRenderPass): void {
         const list = assertExists(this.simpleRenderInstList);
-        list.drawOnPassRenderer(device, this.gfxRenderCache, passRenderer, state);
+        list.drawOnPassRenderer(this.device, this.gfxRenderCache, passRenderer);
     }
     //#endregion
 }
@@ -815,7 +781,7 @@ export class GfxRenderInstManager {
  */
 export function executeOnPass(renderInstManager: GfxRenderInstManager, device: GfxDevice, passRenderer: GfxRenderPass, passMask: number, resetState: boolean = true): void {
     renderInstManager.setVisibleByFilterKeyExact(passMask);
-    renderInstManager.drawOnPassRenderer(device, passRenderer, resetState ? null : defaultTransientState);
+    renderInstManager.drawOnPassRenderer(device, passRenderer);
 }
 
 /**

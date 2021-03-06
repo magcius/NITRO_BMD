@@ -15,7 +15,7 @@ import { GfxBufferCoalescerCombo } from '../gfx/helpers/BufferHelpers';
 import { ColorKind, PacketParams, MaterialParams, loadedDataCoalescerComboGfx } from "../gx/gx_render";
 import { GXShapeHelperGfx, GXMaterialHelperGfx } from '../gx/gx_render';
 import { TextureMapping } from '../TextureHolder';
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from '../gfx/render/GfxRenderInstManager';
 import { ViewerRenderInput } from '../viewer';
 import { colorCopy, colorFromRGBA } from '../Color';
 import { dKy_GxFog_set } from './d_kankyo';

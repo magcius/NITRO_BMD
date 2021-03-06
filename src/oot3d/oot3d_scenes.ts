@@ -4,7 +4,7 @@ import * as CMAB from './cmab';
 import * as CSAB from './csab';
 import * as ZAR from './zar';
 import * as ZSI from './zsi';
-import * as LzS from '../Common/Compression/LzS';
+import * as LzS from './LzS';
 
 import * as Viewer from '../viewer';
 import * as UI from '../ui';
@@ -14,22 +14,22 @@ import { RoomRenderer, CtrTextureHolder, CmbInstance, CmbData, fillSceneParamsDa
 import { SceneGroup } from '../viewer';
 import { assert, assertExists, hexzero } from '../util';
 import { DataFetcher } from '../DataFetcher';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass, GfxBindingLayoutDescriptor } from '../gfx/platform/GfxPlatform';
+import { GfxDevice, GfxRenderPass, GfxBindingLayoutDescriptor } from '../gfx/platform/GfxPlatform';
 import { mat4 } from 'gl-matrix';
 import AnimationController from '../AnimationController';
 import { TransparentBlack, colorNewFromRGBA, White } from '../Color';
-import { BasicRenderTarget, standardFullClearRenderPassDescriptor, depthClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
-import { executeOnPass } from '../gfx/render/GfxRenderer';
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers';
+import { executeOnPass } from '../gfx/render/GfxRenderInstManager';
 import { SceneContext } from '../SceneBase';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { MathConstants, scaleMatrix } from "../MathHelpers";
 import { CameraController } from '../Camera';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const bindingLayouts: GfxBindingLayoutDescriptor[] = [{ numSamplers: 3, numUniformBuffers: 3 }];
 
 const enum OoT3DPass { MAIN = 0x01, SKYBOX = 0x02 };
 export class OoT3DRenderer implements Viewer.SceneGfx {
-    public renderTarget = new BasicRenderTarget();
     public roomRenderers: RoomRenderer[] = [];
     private renderHelper: GfxRenderHelper;
 
@@ -41,39 +41,54 @@ export class OoT3DRenderer implements Viewer.SceneGfx {
         c.setSceneMoveSpeedMult(12/60);
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         template.setBindingLayouts(bindingLayouts);
         fillSceneParamsDataOnTemplate(template, viewerInput.camera);
 
         for (let i = 0; i < this.roomRenderers.length; i++)
-            this.roomRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, hostAccessPass, viewerInput);
+            this.roomRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
-        // First, render the skybox.
-        const skyboxPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        executeOnPass(this.renderHelper.renderInstManager, device, skyboxPassRenderer, OoT3DPass.SKYBOX);
-        device.submitPass(skyboxPassRenderer);
-        // Now do main pass.
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor);
-        executeOnPass(this.renderHelper.renderInstManager, device, mainPassRenderer, OoT3DPass.MAIN);
-        this.renderHelper.renderInstManager.resetRenderInsts();
-        return mainPassRenderer;
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, OoT3DPass.SKYBOX);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, OoT3DPass.MAIN);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
 
         for (let i = 0; i < this.roomRenderers.length; i++)
             this.roomRenderers[i].destroy(device);

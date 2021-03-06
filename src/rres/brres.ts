@@ -2848,21 +2848,11 @@ export function parse(buffer: ArrayBufferSlice): RRES {
     const view = buffer.createDataView();
 
     assert(readString(buffer, 0x00, 0x04) === 'bres');
-
-    let littleEndian: boolean;
-    switch (view.getUint16(0x04, false)) {
-    case 0xFEFF:
-        littleEndian = false;
-        break;
-    case 0xFFFE:
-        littleEndian = true;
-        break;
-    default:
-        throw new Error("Invalid BOM");
-    }
-
+    const littleEndianMarker = view.getUint16(0x04);
+    assert(littleEndianMarker === 0xFEFF || littleEndianMarker === 0xFFFE);
+    const littleEndian = (littleEndianMarker === 0xFFFE);
     assert(!littleEndian);
-
+    const fileVersion = view.getUint16(0x06);
     const fileLength = view.getUint32(0x08);
     const rootSectionOffs = view.getUint16(0x0C);
     const numSections = view.getUint16(0x0E);
@@ -3290,7 +3280,7 @@ export class SCN0Animator {
                     const aimZ = sampleFloatAnimationTrack(entry.aimZ, animFrame);
                     // This is in world-space. When copying it to the material params, we'll multiply by the view matrix.
                     vec3.set(dst.light.Position, (aimX - posX) * -1e10, (aimY - posY) * -1e10, (aimZ - posZ) * -1e10);
-                    vec3.set(dst.light.Direction, 0, 0, 0);
+                    vec3.zero(dst.light.Direction);
                     vec3.set(dst.light.DistAtten, 1, 0, 0);
                     vec3.set(dst.light.CosAtten, 1, 0, 0);
                 } else if (entry.lightType === SCN0_LightType.POINT) {
@@ -3299,7 +3289,7 @@ export class SCN0Animator {
                     const refDistance = sampleFloatAnimationTrack(entry.refDistance, animFrame);
                     const refBrightness = sampleFloatAnimationTrack(entry.refBrightness, animFrame);
                     GX_Material.lightSetDistAttn(dst.light, refDistance, refBrightness, entry.distFunc);
-                    vec3.set(dst.light.Direction, 0, 0, 0);
+                    vec3.zero(dst.light.Direction);
                 } else if (entry.lightType === SCN0_LightType.SPOT) {
                     vec3.set(dst.light.Position, posX, posY, posZ);
                     const cutoff = sampleFloatAnimationTrack(entry.cutoff, animFrame);

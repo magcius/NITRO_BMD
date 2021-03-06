@@ -1,13 +1,9 @@
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { readString, decodeString } from "../util";
+import { readString } from "../util";
 
 function readStringSJIS(buffer: ArrayBufferSlice, offs: number): string {
-    const view = buffer.createDataView(offs);
-    let i = 0;
-    while (view.getUint8(i) !== 0)
-        i++;
-    return decodeString(buffer.subarray(offs, i), 'sjis');
+    return readString(buffer, offs, -1, true, 'sjis');
 }
 
 // Luigi's Mansion

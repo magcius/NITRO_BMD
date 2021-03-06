@@ -5,7 +5,7 @@ import { GfxDevice, GfxTexture, GfxSampler, GfxCullMode } from "../gfx/platform/
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { GfxBufferCoalescerCombo, GfxCoalescedBuffersCombo } from "../gfx/helpers/BufferHelpers";
 import { LoadedVertexData } from "../gx/gx_displaylist";
-import { GfxRenderInstManager, GfxRenderInst, setSortKeyLayer, GfxRendererLayer } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRenderInst, setSortKeyLayer, GfxRendererLayer } from "../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput, Texture } from "../viewer";
 import { vec3, mat4, ReadonlyVec3 } from "gl-matrix";
 import { computeModelMatrixSRT, lerp, saturate, MathConstants, Vec3One, computeModelMatrixR, computeModelMatrixS } from "../MathHelpers";

@@ -2,7 +2,7 @@
 import { vec3 } from "gl-matrix";
 import { Stream, Stream_read_Vector3, Stream_read_Array_int, Stream_read_Color, Stream_read_Quaternion, Stream_read_Vector2, Stream_read_Array_float } from "./Stream";
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { assert, fallbackUndefined } from "../util";
+import { assert, fallbackUndefined, nullify } from "../util";
 import { Entity, Portable, Lightmap_Table, Entity_Pattern_Point, Entity_Inanimate, Entity_Power_Cable } from "./Entity";
 
 function get_truth_value(portable: Portable, item: Metadata_Item): boolean {
@@ -2059,7 +2059,7 @@ class Portable_Type_Manager {
     }
 
     public get_portable_type_from_name(type_name: string): Portable_Type {
-        return fallbackUndefined(this.types.get(type_name), null)!;
+        return nullify(this.types.get(type_name))!;
     }
 }
 

@@ -390,9 +390,7 @@ export class TextureCache {
 export function translateToGfxTexture(device: GfxDevice, texture: Texture): GfxTexture {
     const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, 1));
     device.setResourceName(gfxTexture, texture.name);
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadTextureData(gfxTexture, 0, [texture.pixels]);
-    device.submitPass(hostAccessPass);
+    device.uploadTextureData(gfxTexture, 0, [texture.pixels]);
     return gfxTexture;
 }
 

@@ -28,7 +28,7 @@ export interface RARCFile {
     name: string;
     flags: JKRFileAttr;
     compressionType: JKRCompressionType;
-    buffer: ArrayBufferSlice;
+    buffer: NamedArrayBufferSlice;
 }
 
 export interface RARCDir {
@@ -195,18 +195,18 @@ export function parse(buffer: ArrayBufferSlice, name: string = '', decompressor:
                 const rawFileBuffer = buffer.slice(offs, offs + entryDataSize);
 
                 let compressionType: JKRCompressionType = JKRCompressionType.None;
-                let fileBuffer: ArrayBufferSlice;
+                let fileBuffer: NamedArrayBufferSlice;
                 if (!!(flags & JKRFileAttr.Compressed))
                     compressionType = (flags & JKRFileAttr.CompressionType) ? JKRCompressionType.Yaz0 : JKRCompressionType.Yay0;
 
                 // Only decompress if we're expecting it.
                 if (compressionType !== JKRCompressionType.None && decompressor !== null) {
-                    fileBuffer = decompressor.decompress(rawFileBuffer, compressionType);
+                    fileBuffer = decompressor.decompress(rawFileBuffer, compressionType) as NamedArrayBufferSlice;
                 } else {
-                    fileBuffer = rawFileBuffer;
+                    fileBuffer = rawFileBuffer as NamedArrayBufferSlice;
                 }
 
-                (fileBuffer as NamedArrayBufferSlice).name = name;
+                fileBuffer.name = name;
                 const file: RARCFile = { index, id, name, flags, compressionType, buffer: fileBuffer };
                 files.push(file);
                 allFiles.push(file);

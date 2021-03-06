@@ -13,14 +13,16 @@ import * as RARC from '../Common/JSYSTEM/JKRArchive';
 import { EFB_WIDTH, EFB_HEIGHT, GXMaterialHacks } from '../gx/gx_material';
 import { TextureMapping } from '../TextureHolder';
 import { readString, leftPad, assertExists } from '../util';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform';
+import { GfxDevice, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform';
 import { GXRenderHelperGfx, fillSceneParamsDataOnTemplate } from '../gx/gx_render';
-import { BasicRenderTarget, ColorTexture, standardFullClearRenderPassDescriptor, depthClearRenderPassDescriptor, noClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { SceneContext } from '../SceneBase';
 import { computeModelMatrixS } from '../MathHelpers';
 import { mat4 } from 'gl-matrix';
 import { CameraController } from '../Camera';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
+import { executeOnPass, hasAnyVisible } from '../gfx/render/GfxRenderInstManager';
 
 class ZTPExtraTextures {
     public extraTextures: BTIData[] = [];
@@ -92,8 +94,6 @@ const enum ZTPPass {
 
 class TwilightPrincessRenderer implements Viewer.SceneGfx {
     public renderHelper: GXRenderHelperGfx;
-    public mainRenderTarget = new BasicRenderTarget();
-    public opaqueSceneTexture = new ColorTexture();
     public modelInstances: J3DModelInstanceSimple[] = [];
 
     constructor(device: GfxDevice, public extraTextures: ZTPExtraTextures, public stageRarc: RARC.JKRArchive) {
@@ -143,12 +143,12 @@ class TwilightPrincessRenderer implements Viewer.SceneGfx {
         return [layers, renderHacksPanel];
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    private prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 
@@ -156,7 +156,7 @@ class TwilightPrincessRenderer implements Viewer.SceneGfx {
         for (let i = 0; i < this.modelInstances.length; i++) {
             const m = this.modelInstances[i].getTextureMappingReference('fbtex_dummy');
             if (m !== null) {
-                m.gfxTexture = this.opaqueSceneTexture.gfxTexture;
+                m.lateBinding = 'opaque-scene-texture';
                 m.width = EFB_WIDTH;
                 m.height = EFB_HEIGHT;
                 m.flipY = true;
@@ -164,50 +164,73 @@ class TwilightPrincessRenderer implements Viewer.SceneGfx {
         }
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
-
-        this.mainRenderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        this.opaqueSceneTexture.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
         this.setIndirectTextureOverride();
 
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
-        const skyboxPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        renderInstManager.setVisibleByFilterKeyExact(ZTPPass.SKYBOX);
-        renderInstManager.drawOnPassRenderer(device, skyboxPassRenderer);
-        device.submitPass(skyboxPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
 
-        const opaquePassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor, this.opaqueSceneTexture.gfxTexture);
-        renderInstManager.setVisibleByFilterKeyExact(ZTPPass.OPAQUE);
-        renderInstManager.drawOnPassRenderer(device, opaquePassRenderer);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, ZTPPass.SKYBOX);
+            });
+        });
 
-        let lastPassRenderer: GfxRenderPass;
-        renderInstManager.setVisibleByFilterKeyExact(ZTPPass.INDIRECT);
-        if (renderInstManager.hasAnyVisible()) {
-            device.submitPass(opaquePassRenderer);
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, ZTPPass.OPAQUE);
+            });
+        });
 
-            const indTexPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, noClearRenderPassDescriptor);
-            renderInstManager.drawOnPassRenderer(device, indTexPassRenderer);
-            lastPassRenderer = indTexPassRenderer;
-        } else {
-            lastPassRenderer = opaquePassRenderer;
+        if (hasAnyVisible(renderInstManager, ZTPPass.INDIRECT)) {
+            builder.pushPass((pass) => {
+                pass.setDebugName('Indirect');
+                pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+                pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+
+                const opaqueSceneTextureID = builder.resolveRenderTarget(mainColorTargetID);
+                pass.attachResolveTexture(opaqueSceneTextureID);
+
+                pass.exec((passRenderer, scope) => {
+                    renderInstManager.setVisibleByFilterKeyExact(ZTPPass.INDIRECT);
+                    renderInstManager.simpleRenderInstList!.resolveLateSamplerBinding('opaque-scene-texture', { gfxTexture: scope.getResolveTextureForID(opaqueSceneTextureID), gfxSampler: null, lateBinding: null });
+                    renderInstManager.drawOnPassRenderer(device, passRenderer);
+                });
+            });
         }
 
-        renderInstManager.setVisibleByFilterKeyExact(ZTPPass.TRANSPARENT);
-        renderInstManager.drawOnPassRenderer(device, lastPassRenderer);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Transparent');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, ZTPPass.TRANSPARENT);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return lastPassRenderer;
     }
 
     public destroy(device: GfxDevice) {
         this.renderHelper.destroy(device);
         this.extraTextures.destroy(device);
-        this.mainRenderTarget.destroy(device);
-        this.opaqueSceneTexture.destroy(device);
         this.modelInstances.forEach((instance) => instance.destroy(device));
     }
 }

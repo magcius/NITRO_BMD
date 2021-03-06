@@ -194,7 +194,7 @@ export function runDL_F3DEX2(state: RSPState, addr: number): void {
             break outer;
 
         case F3DEX2_GBI.G_GEOMETRYMODE:
-            state.gSPClearGeometryMode(w0 & 0x00FFFFFF);
+            state.gSPClearGeometryMode(~(w0 & 0x00FFFFFF));
             state.gSPSetGeometryMode(w1);
             break;
 

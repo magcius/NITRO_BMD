@@ -1,6 +1,7 @@
 
 import { GfxVendorInfo, GfxProgramDescriptorSimple, GfxDevice } from "../platform/GfxPlatform";
 import { assert } from "../platform/GfxPlatformUtil";
+import { GfxShaderLibrary } from "../helpers/ShaderHelpers";
 
 // Shader preprocessor / compiler infrastructure for GLSL.
 
@@ -86,39 +87,6 @@ layout(set = ${set}, binding = ${binding++}) uniform sampler S_${samplerName};
         });
     }
 
-    const matrixLibary = `
-struct Mat4x4 { vec4 mx; vec4 my; vec4 mz; vec4 mw; };
-struct Mat4x3 { vec4 mx; vec4 my; vec4 mz; };
-struct Mat4x2 { vec4 mx; vec4 my; };
-
-vec3 Mat4x3GetCol0(Mat4x3 m) { return vec3(m.mx.x, m.my.x, m.mz.x); }
-vec3 Mat4x3GetCol1(Mat4x3 m) { return vec3(m.mx.y, m.my.y, m.mz.y); }
-vec3 Mat4x3GetCol2(Mat4x3 m) { return vec3(m.mx.z, m.my.z, m.mz.z); }
-vec3 Mat4x3GetCol3(Mat4x3 m) { return vec3(m.mx.w, m.my.w, m.mz.w); }
-
-vec4 Mul(Mat4x4 m, vec4 v) { return vec4(dot(m.mx, v), dot(m.my, v), dot(m.mz, v), dot(m.mw, v)); }
-vec3 Mul(Mat4x3 m, vec4 v) { return vec3(dot(m.mx, v), dot(m.my, v), dot(m.mz, v)); }
-vec2 Mul(Mat4x2 m, vec4 v) { return vec2(dot(m.mx, v), dot(m.my, v)); }
-
-vec4 Mul(vec3 v, Mat4x3 m) {
-    return vec4(
-        dot(Mat4x3GetCol0(m), v),
-        dot(Mat4x3GetCol1(m), v),
-        dot(Mat4x3GetCol2(m), v),
-        dot(Mat4x3GetCol3(m), v)
-    );
-}
-
-void Fma(inout Mat4x3 d, Mat4x3 m, float s) { d.mx += m.mx * s; d.my += m.my * s; d.mz += m.mz * s; }
-
-Mat4x4 _Mat4x4(float n) { Mat4x4 o; o.mx.x = n; o.my.y = n; o.mz.z = n; o.mw.w = n; return o; }
-Mat4x4 _Mat4x4(Mat4x3 m) { Mat4x4 o = _Mat4x4(1.0); o.mx = m.mx; o.my = m.my; o.mz = m.mz; return o; }
-Mat4x4 _Mat4x4(Mat4x2 m) { Mat4x4 o = _Mat4x4(1.0); o.mx = m.mx; o.my = m.my; return o; }
-
-Mat4x3 _Mat4x3(float n) { Mat4x3 o; o.mx.x = n; o.my.y = n; o.mz.z = n; return o; }
-Mat4x3 _Mat4x3(Mat4x4 m) { Mat4x3 o; o.mx = m.mx; o.my = m.my; o.mz = m.mz; return o; }
-`;
-
     const hasFragColor = rest.includes('gl_FragColor');
 
     let concat = `
@@ -133,7 +101,7 @@ ${hasFragColor ? `
 #define gl_FragColor o_color
 ${type === 'frag' ? `out vec4 o_color;` : ''}
 ` : ``}
-${matrixLibary}
+${GfxShaderLibrary.mat4}
 ${definesString}
 ${rest}
 `.trim();

@@ -2,7 +2,7 @@ import * as RDP from '../Common/N64/RDP';
 
 import {
     GfxDevice, GfxBuffer, GfxInputLayout, GfxInputState, GfxBufferUsage, GfxVertexAttributeDescriptor, GfxFormat, GfxVertexBufferFrequency,
-    GfxRenderPass, GfxHostAccessPass, GfxBindingLayoutDescriptor, GfxWrapMode, GfxMipFilterMode, GfxTexFilterMode,
+    GfxRenderPass, GfxBindingLayoutDescriptor, GfxWrapMode, GfxMipFilterMode, GfxTexFilterMode,
     GfxSampler, GfxBlendFactor, GfxBlendMode, GfxTexture, GfxMegaStateDescriptor, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D, GfxProgram,
 } from "../gfx/platform/GfxPlatform";
 import { SceneGfx, ViewerRenderInput, Texture } from "../viewer";
@@ -12,12 +12,12 @@ import { readString, assert, hexzero, nArray } from "../util";
 import { decompress } from "../Common/Compression/MIO0";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
 import { DeviceProgram } from "../Program";
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepth, getSortKeyLayer, executeOnPass } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepth, getSortKeyLayer, executeOnPass } from "../gfx/render/GfxRenderInstManager";
 import { fillMatrix4x3, fillMatrix4x4, fillMatrix4x2, fillVec4v, fillVec3v } from "../gfx/helpers/UniformBufferHelpers";
 import { mat4, vec3, vec4 } from "gl-matrix";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
-import { standardFullClearRenderPassDescriptor, BasicRenderTarget, depthClearRenderPassDescriptor, makeClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { computeViewMatrix, CameraController } from "../Camera";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
+import { standardFullClearRenderPassDescriptor, makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from "../gfx/helpers/RenderGraphHelpers";
+import { CameraController } from "../Camera";
 import { MathConstants, clamp, computeMatrixWithoutTranslation, scaleMatrix } from "../MathHelpers";
 import { TextureState, RSP_Geometry, translateBlendMode } from "../BanjoKazooie/f3dex";
 import { ImageFormat, ImageSize, getImageFormatName, decodeTex_RGBA16, getImageSizeName, decodeTex_I4, decodeTex_I8, decodeTex_IA4, decodeTex_IA8, decodeTex_IA16 } from "../Common/N64/Image";
@@ -30,6 +30,8 @@ import { SingleSelect, Panel, TIME_OF_DAY_ICON, COOL_BLUE_COLOR } from "../ui";
 import { fullscreenMegaState, setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers";
 import { F3DEX_Program } from "../BanjoKazooie/render";
 import { calcTextureScaleForShift } from '../Common/N64/RSP';
+import { colorNewFromRGBA } from '../Color';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 interface Pilotwings64FSFileChunk {
     tag: string;
@@ -1954,10 +1956,9 @@ class TextureData {
 
         this.gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, texture.levels.length));
         device.setResourceName(this.gfxTexture, texture.name);
-        const hostAccessPass = device.createHostAccessPass();
+
         const levels = texture.levels.filter((t) => !t.usesPaired).map((t) => t.pixels);
-        hostAccessPass.uploadTextureData(this.gfxTexture, 0, levels);
-        device.submitPass(hostAccessPass);
+        device.uploadTextureData(this.gfxTexture, 0, levels);
 
         this.gfxSampler = device.createSampler({
             wrapS: translateCM(texture.cms),
@@ -2824,7 +2825,6 @@ class Pilotwings64Renderer implements SceneGfx {
     public skyRenderers: ObjectRenderer[] = [];
     public snowRenderer: SnowRenderer | null = null;
     public renderHelper: GfxRenderHelper;
-    private renderTarget = new BasicRenderTarget();
 
     public taskLabels: TaskLabel[] = [];
     public strIndexToTask: number[] = [];
@@ -2842,7 +2842,7 @@ class Pilotwings64Renderer implements SceneGfx {
         c.setSceneMoveSpeedMult(128/60);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         template.setBindingLayouts(bindingLayouts);
         template.setMegaStateFlags(setAttachmentStateSimple({}, {
@@ -2873,7 +2873,7 @@ class Pilotwings64Renderer implements SceneGfx {
             this.snowRenderer.prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
     // For console runtime debugging.
@@ -2883,24 +2883,39 @@ class Pilotwings64Renderer implements SceneGfx {
         return dobjRenderer;
     }
 
-    public render(device: GfxDevice, viewerInput: ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
+    public render(device: GfxDevice, viewerInput: ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const skyPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.renderPassDescriptor);
-        executeOnPass(renderInstManager, device, skyPassRenderer, PW64Pass.SKYBOX);
-        device.submitPass(skyPassRenderer);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.renderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.renderPassDescriptor);
 
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor);
-        executeOnPass(renderInstManager, device, passRenderer, PW64Pass.NORMAL);
-        executeOnPass(renderInstManager, device, passRenderer, PW64Pass.SNOW);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, PW64Pass.SKYBOX);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, PW64Pass.NORMAL);
+                executeOnPass(renderInstManager, device, passRenderer, PW64Pass.SNOW);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return skyPassRenderer;
     }
 
     public setCurrentTask(index: number): void {
@@ -2938,7 +2953,6 @@ class Pilotwings64Renderer implements SceneGfx {
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         if (this.snowRenderer !== null)
             this.snowRenderer.destroy(device);
     }
@@ -3078,7 +3092,8 @@ class Pilotwings64SceneDesc implements SceneDesc {
         };
 
         const renderer = new Pilotwings64Renderer(device, dataHolder, modelBuilder);
-        renderer.renderPassDescriptor = makeClearRenderPassDescriptor(true, {r: skybox.clearColor[0], g: skybox.clearColor[1], b: skybox.clearColor[2], a: 1});
+        const clearColor = colorNewFromRGBA(skybox.clearColor[0], skybox.clearColor[1], skybox.clearColor[2]);
+        renderer.renderPassDescriptor = makeClearRenderPassDescriptor(clearColor);
         const isMap = this.weatherConditions < 0;
 
         if (skybox.skyboxModel !== undefined) {

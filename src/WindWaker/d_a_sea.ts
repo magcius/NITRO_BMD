@@ -5,10 +5,10 @@ import { BTIData } from "../Common/JSYSTEM/JUTTexture";
 import { MathConstants, computeModelMatrixSRT, computeModelMatrixS, invlerp, lerp, saturate, clamp } from "../MathHelpers";
 import { dGlobals } from "./zww_scenes";
 import { nArray, assert } from "../util";
-import { vec2, vec3, mat4 } from "gl-matrix";
+import { vec2, vec3, mat4, ReadonlyVec3 } from "gl-matrix";
 import { fopAc_ac_c, fpc__ProcessName, cPhs__Status } from "./framework";
 import { ResType } from "./d_resorce";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../viewer";
 import { TDDraw } from "../SuperMarioGalaxy/DDraw";
 import { GXMaterialHelperGfx, MaterialParams, PacketParams, ColorKind } from '../gx/gx_render';
@@ -263,10 +263,33 @@ export class d_a_sea extends fopAc_ac_c {
 
         mb.setTevKColorSel(0, GX.KonstColorSel.KCSEL_K0);
         mb.setTevKColorSel(1, GX.KonstColorSel.KCSEL_K1);
+        mb.setUsePnMtxIdx(false);
 
         this.materialHelper = new GXMaterialHelperGfx(mb.finish());
+        globals.sea = this;
 
         return cPhs__Status.Next;
+    }
+
+    private ChkAreaBeforePos(globals: dGlobals, x: number, z: number): boolean {
+        const height = this.waterHeightMng.GetHeightPos(globals, x, z);
+        if (height === 0 && this.cullStopFlag)
+            return false;
+
+        return true;
+    }
+
+    public ChkArea(globals: dGlobals, x: number, z: number): boolean {
+        // ChkAreaBeforePos
+        if (!this.ChkAreaBeforePos(globals, x, z))
+            return false;
+
+        return x >= this.drawMinX && x <= this.drawMaxX && z >= this.drawMinZ && z <= this.drawMaxZ;
+    }
+
+    public calcWave(globals: dGlobals, x: number, z: number): number {
+        // TODO(jstpierre):
+        return this.baseHeight;
     }
 
     private ClrFlat(): void {
@@ -626,4 +649,12 @@ export class d_a_sea extends fopAc_ac_c {
         const device = globals.modelCache.device;
         this.ddraw.destroy(device);
     }
+}
+
+export function dLib_getWaterY(globals: dGlobals, pos: ReadonlyVec3, objAcch: any): number {
+    if (globals.sea === null)
+        return 0;
+
+    const waveY = globals.sea.calcWave(globals, pos[0], pos[2]);
+    return waveY;
 }

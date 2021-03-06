@@ -14,7 +14,7 @@ import { dKyw_rain_set, ThunderState, ThunderMode, dKyw_wether_move, dKyw_wether
 import { cM_rndF, cLib_addCalc, cLib_addCalc2 } from "./SComponent";
 import { fpc__ProcessName, fopKyM_Create, fpc_bs__Constructor, fGlobals, fpcPf__Register, kankyo_class, cPhs__Status } from "./framework";
 import { ViewerRenderInput } from "../viewer";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { FogType } from "../gx/gx_enum";
 
 export const enum LightType {
@@ -1248,11 +1248,16 @@ export function dKy_set_vrboxcol_ratio(envLight: dScnKy_env_light_c, ratio: numb
     dKy_set_vrboxkumocol_ratio(envLight, ratio);
 }
 
-export function dKy_get_seacolor(envLight: dScnKy_env_light_c, dstAmb: Color, dstDif: Color): void {
-    colorAdd(dstAmb, envLight.bgCol[1].C0, envLight.bgAdd[1].C0);
-    colorClampLDR(dstAmb, dstAmb);
-    colorAdd(dstDif, envLight.bgCol[1].K0, envLight.bgAdd[1].K0);
-    colorClampLDR(dstDif, dstDif);
+export function dKy_get_seacolor(envLight: dScnKy_env_light_c, dstAmb: Color | null, dstDif: Color | null): void {
+    if (dstAmb !== null) {
+        colorAdd(dstAmb, envLight.bgCol[1].C0, envLight.bgAdd[1].C0);
+        colorClampLDR(dstAmb, dstAmb);
+    }
+
+    if (dstDif !== null) {
+        colorAdd(dstDif, envLight.bgCol[1].K0, envLight.bgAdd[1].K0);
+        colorClampLDR(dstDif, dstDif);
+    }
 }
 
 export function dKy_change_colpat(envLight: dScnKy_env_light_c, idx: number): void {

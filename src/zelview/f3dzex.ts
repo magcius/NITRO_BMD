@@ -118,7 +118,21 @@ function translateZMode(zmode: ZMode): GfxCompareMode {
     throw "Unknown Z mode: " + zmode;
 }
 
-export function translateBlendMode(geoMode: number, renderMode: number): Partial<GfxMegaStateDescriptor> {
+export function translateCullMode(geoMode: number): GfxCullMode {
+    if (geoMode & RSP_Geometry.G_CULL_BACK) {
+        if (geoMode & RSP_Geometry.G_CULL_FRONT) {
+            return GfxCullMode.FRONT_AND_BACK;
+        } else {
+            return GfxCullMode.BACK;
+        }
+    } else if (geoMode & RSP_Geometry.G_CULL_FRONT) {
+        return GfxCullMode.FRONT;
+    } else {
+        return GfxCullMode.NONE;
+    }
+}
+
+export function translateBlendMode(renderMode: number): Partial<GfxMegaStateDescriptor> {
     const out: Partial<GfxMegaStateDescriptor> = {};
 
     const srcColor: BlendParam_PM_Color = (renderMode >>> OtherModeL_Layout.P_2) & 0x03;
@@ -154,18 +168,6 @@ export function translateBlendMode(geoMode: number, renderMode: number): Partial
             blendDstFactor: GfxBlendFactor.ZERO,
             blendMode: GfxBlendMode.ADD,
         });
-    }
-
-    if (geoMode & RSP_Geometry.G_CULL_BACK) {
-        if (geoMode & RSP_Geometry.G_CULL_FRONT) {
-            out.cullMode = GfxCullMode.FRONT_AND_BACK;
-        } else {
-            out.cullMode = GfxCullMode.BACK;
-        }
-    } else if (geoMode & RSP_Geometry.G_CULL_FRONT) {
-        out.cullMode = GfxCullMode.FRONT;
-    } else {
-        out.cullMode = GfxCullMode.NONE;
     }
 
     if (renderMode & (1 << OtherModeL_Layout.Z_CMP)) {
@@ -885,7 +887,7 @@ export function runDL_F3DZEX(state: RSPState, rom: Rom, addr: number): void {
             break;
 
         case F3DZEX_GBI.G_GEOMETRYMODE:
-            state.gSPClearGeometryMode(w0 & 0x00FFFFFF);
+            state.gSPClearGeometryMode(~(w0 & 0x00FFFFFF));
             state.gSPSetGeometryMode(w1);
             break;
 

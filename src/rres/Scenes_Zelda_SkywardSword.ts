@@ -10,17 +10,17 @@ import * as U8 from './u8';
 import { assert, readString, assertExists, hexzero } from '../util';
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { RRESTextureHolder, MDL0Model, MDL0ModelInstance } from './render';
-import { TextureOverride } from '../TextureHolder';
 import { EFB_WIDTH, EFB_HEIGHT, GXMaterialHacks } from '../gx/gx_material';
 import { mat4, quat } from 'gl-matrix';
 import AnimationController from '../AnimationController';
 import { GXRenderHelperGfx, fillSceneParamsDataOnTemplate } from '../gx/gx_render';
-import { GfxDevice, GfxRenderPass, GfxHostAccessPass, GfxTexture, GfxFormat, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
-import { executeOnPass, hasAnyVisible, GfxRendererLayer } from '../gfx/render/GfxRenderer';
-import { BasicRenderTarget, ColorTexture, standardFullClearRenderPassDescriptor, depthClearRenderPassDescriptor, noClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { GfxDevice, GfxTexture, GfxFormat, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
+import { executeOnPass, hasAnyVisible, GfxRendererLayer } from '../gfx/render/GfxRenderInstManager';
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers';
 import { ColorKind } from '../gx/gx_render';
 import { SceneContext } from '../SceneBase';
 import { colorNewCopy, White } from '../Color';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const materialHacks: GXMaterialHacks = {
     lightingFudge: (p) => `vec4((0.5 * ${p.matSource}).rgb, 1.0)`,
@@ -146,8 +146,6 @@ class ZSSTextureHolder extends RRESTextureHolder {
 }
 
 class SkywardSwordRenderer implements Viewer.SceneGfx {
-    public mainRenderTarget = new BasicRenderTarget();
-    public opaqueSceneTexture = new ColorTexture();
     public textureHolder: RRESTextureHolder;
     public animationController: AnimationController;
     private stageRRES: BRRES.RRES;
@@ -172,10 +170,11 @@ class SkywardSwordRenderer implements Viewer.SceneGfx {
         const systemRRES = BRRES.parse(systemArchive.findFileData('g3d/model.brres')!);
         this.textureHolder.addRRESTextures(device, systemRRES);
 
+        this.textureHolder.setTextureOverride('DummyWater', { gfxTexture: null, lateBinding: 'opaque-scene-texture', width: EFB_WIDTH, height: EFB_HEIGHT, flipY: true })
         // Override the "Add" textures with a black texture to prevent things from being overly bright.
         this.blackTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, 1, 1, 1));
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(this.blackTexture, 0, [new Uint8Array([0, 0, 0, 0])]);
+
+        device.uploadTextureData(this.blackTexture, 0, [new Uint8Array([0, 0, 0, 0])]);
         this.textureHolder.setTextureOverride('LmChaAdd', { gfxTexture: this.blackTexture, width: 1, height: 1, flipY: false });
         this.textureHolder.setTextureOverride('LmBGAdd', { gfxTexture: this.blackTexture, width: 1, height: 1, flipY: false });
 
@@ -307,56 +306,73 @@ class SkywardSwordRenderer implements Viewer.SceneGfx {
         this.textureHolder.destroy(device);
         this.renderHelper.destroy(device);
         this.modelCache.destroy(device);
-        this.mainRenderTarget.destroy(device);
-        this.opaqueSceneTexture.destroy(device);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].destroy(device);
         device.destroyTexture(this.blackTexture);
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    private prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.animationController.setTimeInMilliseconds(viewerInput.time);
 
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.mainRenderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        this.opaqueSceneTexture.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
-        const skyboxPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        executeOnPass(this.renderHelper.renderInstManager, device, skyboxPassRenderer, ZSSPass.SKYBOX);
-        device.submitPass(skyboxPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
 
-        const opaquePassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, depthClearRenderPassDescriptor, this.opaqueSceneTexture.gfxTexture);
-        executeOnPass(this.renderHelper.renderInstManager, device, opaquePassRenderer, ZSSPass.OPAQUE);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(this.renderHelper.renderInstManager, device, passRenderer, ZSSPass.SKYBOX);
+            });
+        });
 
-        let lastPassRenderer: GfxRenderPass;
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(this.renderHelper.renderInstManager, device, passRenderer, ZSSPass.OPAQUE);
+            });
+        });
+
         if (hasAnyVisible(this.renderHelper.renderInstManager, ZSSPass.INDIRECT)) {
-            device.submitPass(opaquePassRenderer);
+            builder.pushPass((pass) => {
+                pass.setDebugName('Indirect');
+                pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+                pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
 
-            // IndTex.
-            const textureOverride: TextureOverride = { gfxTexture: this.opaqueSceneTexture.gfxTexture!, width: EFB_WIDTH, height: EFB_HEIGHT, flipY: true };
-            this.textureHolder.setTextureOverride("DummyWater", textureOverride);
+                const opaqueSceneTextureID = builder.resolveRenderTarget(mainColorTargetID);
+                pass.attachResolveTexture(opaqueSceneTextureID);
 
-            const indTexPassRenderer = this.mainRenderTarget.createRenderPass(device, viewerInput.viewport, noClearRenderPassDescriptor);
-            executeOnPass(this.renderHelper.renderInstManager, device, indTexPassRenderer, ZSSPass.INDIRECT);
-            lastPassRenderer = indTexPassRenderer;
-        } else {
-            lastPassRenderer = opaquePassRenderer;
+                pass.exec((passRenderer, scope) => {
+                    renderInstManager.setVisibleByFilterKeyExact(ZSSPass.INDIRECT);
+                    renderInstManager.simpleRenderInstList!.resolveLateSamplerBinding('opaque-scene-texture', { gfxTexture: scope.getResolveTextureForID(opaqueSceneTextureID), gfxSampler: null, lateBinding: null });
+                    renderInstManager.drawOnPassRenderer(device, passRenderer);
+                });
+            });
         }
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        this.renderHelper.renderInstManager.resetRenderInsts();
-        return lastPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     private spawnObj(device: GfxDevice, obj: BaseObj, modelMatrix: mat4): void {
@@ -650,78 +666,117 @@ const sceneDescs = [
     "Skyloft",
     new SkywardSwordSceneDesc("F000", "Skyloft"),
     new SkywardSwordSceneDesc("F001r", "Knight's Academy"),
-	new SkywardSwordSceneDesc("F002r", "Beedle's Airshop"),
-	new SkywardSwordSceneDesc("F004r", "Bazaar"),
-	new SkywardSwordSceneDesc("F005r", "Orielle & Parrow’s House"),
-	new SkywardSwordSceneDesc("F006r", "Kukiel’s House"),
-	new SkywardSwordSceneDesc("F007r", "Piper’s House"),
-	new SkywardSwordSceneDesc("F008r", "Inside the Statue of the Goddess"),
-	new SkywardSwordSceneDesc("F009r", "Sparring Hall"),
-	new SkywardSwordSceneDesc("F010r", "Isle of Songs Tower"),
-	new SkywardSwordSceneDesc("F011r", "The Lumpy Pumpkin"),
-	new SkywardSwordSceneDesc("F012r", "Batreaux’s House"),
-	new SkywardSwordSceneDesc("F013r", "Fortune-teller Sparrot’s House"),
-	new SkywardSwordSceneDesc("F014r", "Potion Shop Owner Bertie’s House"),
-	new SkywardSwordSceneDesc("F015r", "Scrap Shop Owner Gondo’s House"),
-	new SkywardSwordSceneDesc("F016r", "Pipet’s House"),
-	new SkywardSwordSceneDesc("F017r", "Gear Peddler Rupin’s House"),
-	new SkywardSwordSceneDesc("F018r", "Item Check Girl Peatrice’s House"),
-	new SkywardSwordSceneDesc("F019r", "Bamboo Island"),
-	new SkywardSwordSceneDesc("D000", "Waterfall Cave"),
+    new SkywardSwordSceneDesc("F002r", "Beedle's Airshop"),
+    new SkywardSwordSceneDesc("F004r", "Bazaar"),
+    new SkywardSwordSceneDesc("F005r", "Orielle & Parrow’s House"),
+    new SkywardSwordSceneDesc("F006r", "Kukiel’s House"),
+    new SkywardSwordSceneDesc("F007r", "Piper’s House"),
+    new SkywardSwordSceneDesc("F008r", "Inside the Statue of the Goddess"),
+    new SkywardSwordSceneDesc("F009r", "Sparring Hall"),
+    new SkywardSwordSceneDesc("F010r", "Isle of Songs Tower"),
+    new SkywardSwordSceneDesc("F011r", "The Lumpy Pumpkin"),
+    new SkywardSwordSceneDesc("F012r", "Batreaux’s House"),
+    new SkywardSwordSceneDesc("F013r", "Fortune-teller Sparrot’s House"),
+    new SkywardSwordSceneDesc("F014r", "Potion Shop Owner Bertie’s House"),
+    new SkywardSwordSceneDesc("F015r", "Scrap Shop Owner Gondo’s House"),
+    new SkywardSwordSceneDesc("F016r", "Pipet’s House"),
+    new SkywardSwordSceneDesc("F017r", "Gear Peddler Rupin’s House"),
+    new SkywardSwordSceneDesc("F018r", "Item Check Girl Peatrice’s House"),
+    new SkywardSwordSceneDesc("F019r", "Bamboo Island"),
+    new SkywardSwordSceneDesc("F020", "The Sky"),
+    new SkywardSwordSceneDesc("S000", "Skyloft Silent Realm"),
+    new SkywardSwordSceneDesc("F021", "Cutscene Sky"),
+    // new SkywardSwordSceneDesc("F023", "Inside the Thunderhead"), // missing object
+    new SkywardSwordSceneDesc("D000", "Waterfall Cave"),
 
     "Faron Woods",
-	new SkywardSwordSceneDesc("F100", "Faron Woods"),
-	new SkywardSwordSceneDesc("F100_1", "Inside the Great Tree"),
+    new SkywardSwordSceneDesc("F100", "Faron Woods"),
+    new SkywardSwordSceneDesc("F100_1", "Inside the Great Tree"),
     new SkywardSwordSceneDesc("D100", "Skyview Temple"),
-	new SkywardSwordSceneDesc("F102_2", "Faron's Lair"),
-	new SkywardSwordSceneDesc("F101", "Deep Woods"),
-	new SkywardSwordSceneDesc("F102", "Lake Floria"),
-	new SkywardSwordSceneDesc("F102_1", "Outside Ancient Cistern"),
-	new SkywardSwordSceneDesc("D101", "Ancient Cistern"),
-	new SkywardSwordSceneDesc("F103", "Faron Woods (Flooded)"),
-	
-    "Eldin Volcano",
-	new SkywardSwordSceneDesc("F200", "Eldin Volcano"),
-	new SkywardSwordSceneDesc("F210", "Caves"),
-	new SkywardSwordSceneDesc("F211", "Thrill Digger"),
-	new SkywardSwordSceneDesc("F201_1", "Inside Volcano"),
-	new SkywardSwordSceneDesc("F201_4", "Volcano Summit - Waterfall"),
-	new SkywardSwordSceneDesc("F202_1", "Despacito 202_1"),
-	new SkywardSwordSceneDesc("F221", "Despacito 221"),
-    new SkywardSwordSceneDesc("D200", "Earth Temple"),
-	new SkywardSwordSceneDesc("F201_3", "Fire Sanctuary Entrance"),
-	new SkywardSwordSceneDesc("D201", "Fire Sanctuary (A)"),
-	new SkywardSwordSceneDesc("D201_1", "Fire Sanctuary (B)"),
-	
-    "Lanayru Desert",
-	new SkywardSwordSceneDesc("F300", "Lanayru Desert"),
-	new SkywardSwordSceneDesc("F300_1", "Ancient Harbor"),
-	new SkywardSwordSceneDesc("D301", "Sandship"),	
-	new SkywardSwordSceneDesc("F300_2", "Lanayru Mine"),
-    new SkywardSwordSceneDesc("D300", "Lanayru Mining Facility (A)"),	
-	new SkywardSwordSceneDesc("D300_1", "Lanayru Mining Facility (B)"),
-	new SkywardSwordSceneDesc("F300_3", "Power Generator #1"),
-	new SkywardSwordSceneDesc("F300_4", "Power Generator #2"),
-	new SkywardSwordSceneDesc("F300_5", "Temple of Time"),
-	new SkywardSwordSceneDesc("F301", "Sand Sea Docks"),
-	new SkywardSwordSceneDesc("F301_1", "Sand Sea"),
-	new SkywardSwordSceneDesc("F301_2", "Pirate Stronghold"),
-	new SkywardSwordSceneDesc("F301_3", "Skipper's Retreat"),
-	new SkywardSwordSceneDesc("F301_5", "Skipper's Retreat Shack"),
-	new SkywardSwordSceneDesc("F301_4", "Shipyard"),
-	new SkywardSwordSceneDesc("F301_7", "Shipyard Construction Bay"),
-	new SkywardSwordSceneDesc("F302", "Lanayru Gorge"),
-	new SkywardSwordSceneDesc("F303", "Lanayru Caves"),
+    new SkywardSwordSceneDesc("B100", "Skyview Temple (Boss)"),
+    new SkywardSwordSceneDesc("B100_1", "Skyview Spring"),
+    new SkywardSwordSceneDesc("F102_2", "Faron's Lair"),
+    new SkywardSwordSceneDesc("F101", "Deep Woods"),
+    new SkywardSwordSceneDesc("S100", "Faron Silent Realm"),
+    new SkywardSwordSceneDesc("F102", "Lake Floria"),
+    new SkywardSwordSceneDesc("F102_1", "Outside Ancient Cistern"),
+    new SkywardSwordSceneDesc("D101", "Ancient Cistern"),
+    new SkywardSwordSceneDesc("B101", "Ancient Cistern (Boss)"),
+    new SkywardSwordSceneDesc("B101_1", "Farore's Flame"),
+    new SkywardSwordSceneDesc("F103", "Faron Woods (Flooded)"),
+    new SkywardSwordSceneDesc("F103_1", "Inside the Great Tree (Flooded)"),
 
-	"Untagged - Sacred Grounds",
-	new SkywardSwordSceneDesc("F400", "F400"),
-	new SkywardSwordSceneDesc("F401", "F401"),
-	new SkywardSwordSceneDesc("F402", "F402"),
-	new SkywardSwordSceneDesc("F403", "F403"),
-	new SkywardSwordSceneDesc("F404", "F404"),
-	new SkywardSwordSceneDesc("F405", "F405"),
-	new SkywardSwordSceneDesc("F406", "F406"),
-    new SkywardSwordSceneDesc("F407", "F407"),
+    "Eldin Volcano",
+    new SkywardSwordSceneDesc("F200", "Eldin Volcano"),
+    new SkywardSwordSceneDesc("F210", "Caves"),
+    new SkywardSwordSceneDesc("F211", "Thrill Digger"),
+    new SkywardSwordSceneDesc("F201_1", "Volcano Summit"),
+    new SkywardSwordSceneDesc("F201_4", "Volcano Summit - Waterfall"),
+    new SkywardSwordSceneDesc("D200", "Earth Temple"),
+    new SkywardSwordSceneDesc("B200", "Earth Temple (Boss)"),
+    new SkywardSwordSceneDesc("B210", "Earth Spring"),
+    new SkywardSwordSceneDesc("S200", "Eldin Silent Realm"),
+    new SkywardSwordSceneDesc("F201_3", "Fire Sanctuary Entrance"),
+    new SkywardSwordSceneDesc("D201", "Fire Sanctuary (A)"),
+    new SkywardSwordSceneDesc("D201_1", "Fire Sanctuary (B)"),
+    new SkywardSwordSceneDesc("B201", "Fire Sanctuary (Boss)"),
+    new SkywardSwordSceneDesc("B201_1", "Din's Flame"),
+    new SkywardSwordSceneDesc("F202", "Eldin Volcano (Bokoblin Base)"),
+    new SkywardSwordSceneDesc("F202_1", "Volcano F3 (Fire Dragon Dummy 1)"),
+    new SkywardSwordSceneDesc("F202_2", "Volcano F3 (Fire Dragon Dummy 2)"),
+    new SkywardSwordSceneDesc("F202_3", "Volcano F3 Completed (Fire Dragon Dummy 1)"),
+    new SkywardSwordSceneDesc("F202_4", "Volcano F3 Completed (Fire Dragon Dummy 2)"),
+    new SkywardSwordSceneDesc("F201_2", "Volcano Summit (Bokoblin Base)"),
+    new SkywardSwordSceneDesc("F221", "Fire Dragon Room"),
+
+    "Lanayru Desert",
+    new SkywardSwordSceneDesc("F300_1", "Lanayru Mines"),
+    new SkywardSwordSceneDesc("F300", "Lanayru Desert"),
+    new SkywardSwordSceneDesc("F300_2", "Power Generator #1"),
+    new SkywardSwordSceneDesc("F300_3", "Power Generator #2"),
+    new SkywardSwordSceneDesc("D300", "Lanayru Mining Facility (A)"),
+    new SkywardSwordSceneDesc("D300_1", "Lanayru Mining Facility (B)"),
+    new SkywardSwordSceneDesc("B300", "Lanayru Mining Facility (Boss)"),
+    new SkywardSwordSceneDesc("F300_5", "Lanayru Mining Facility (Back)"),
+    new SkywardSwordSceneDesc("F300_4", "Temple of Time"),
+    new SkywardSwordSceneDesc("S300", "Lanayru Silent Realm"),
+    new SkywardSwordSceneDesc("F301", "Sand Sea Docks"),
+    new SkywardSwordSceneDesc("F301_1", "Sand Sea"),
+    new SkywardSwordSceneDesc("F301_2", "Pirate Stronghold"),
+    new SkywardSwordSceneDesc("F301_3", "Skipper's Retreat"),
+    new SkywardSwordSceneDesc("F301_5", "Skipper's Retreat Shack"),
+    new SkywardSwordSceneDesc("F301_4", "Shipyard"),
+    new SkywardSwordSceneDesc("F301_7", "Shipyard Construction Bay"),
+    new SkywardSwordSceneDesc("D301", "Sandship (A)"),
+    // new SkywardSwordSceneDesc("D301_1", "Sandship (B)"), // doesn't seem to work, probably only actors
+    new SkywardSwordSceneDesc("B301", "Sandship (Boss)"),
+    new SkywardSwordSceneDesc("F302", "Lanayru Gorge"),
+    new SkywardSwordSceneDesc("F303", "Lanayru Caves"),
+
+    "Sky Keep",
+    new SkywardSwordSceneDesc("D003_0", "Bokoblin Gaunlet"),
+    new SkywardSwordSceneDesc("D003_1", "Bomb Flower Puzzle"),
+    new SkywardSwordSceneDesc("D003_2", "Lava River"),
+    new SkywardSwordSceneDesc("D003_3", "Timeshift Puzzle - Caves"),
+    new SkywardSwordSceneDesc("D003_4", "Timeshift Puzzle - Conveyor"),
+    new SkywardSwordSceneDesc("D003_5", "Ancient Cistern Room"),
+    new SkywardSwordSceneDesc("D003_6", "Pirate Fight"),
+    new SkywardSwordSceneDesc("D003_7", "Entrance"),
+    new SkywardSwordSceneDesc("D003_8", "Triforce Get"),
+
+    "Sealed Grounds",
+    new SkywardSwordSceneDesc("F400", "Behind the Temple"),
+    new SkywardSwordSceneDesc("F401", "Whirlpool"),
+    new SkywardSwordSceneDesc("F402", "Sealed Temple"),
+    new SkywardSwordSceneDesc("F403", "Hylia's Realm"),
+    new SkywardSwordSceneDesc("F404", "Temple of Hylia"),
+    new SkywardSwordSceneDesc("F405", "Whirlpool (Cutscene)"),
+    new SkywardSwordSceneDesc("F406", "Sealed Grounds (With Statue)"),
+    new SkywardSwordSceneDesc("F407", "Temple (Cutscene)"),
+    new SkywardSwordSceneDesc("B400", "Last Boss"),
+
+    "Demo",
+    new SkywardSwordSceneDesc("Demo", "Staff Roll"),
 ];
 
 export const sceneGroup: Viewer.SceneGroup = { id, name, sceneDescs };

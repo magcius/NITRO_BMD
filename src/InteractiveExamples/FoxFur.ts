@@ -2,12 +2,12 @@
 import { OrbitCameraController } from '../Camera';
 
 import { SceneDesc, SceneContext, GraphObjBase } from "../SceneBase";
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass, GfxTexture, GfxBuffer, GfxBufferUsage, GfxFormat, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxBindingLayoutDescriptor, GfxProgram, GfxBlendMode, GfxBlendFactor, GfxCullMode, makeTextureDescriptor2D, GfxColorWriteMask } from "../gfx/platform/GfxPlatform";
+import { GfxDevice, GfxTexture, GfxBuffer, GfxBufferUsage, GfxFormat, GfxVertexBufferFrequency, GfxInputLayout, GfxInputState, GfxBindingLayoutDescriptor, GfxProgram, GfxBlendMode, GfxBlendFactor, GfxCullMode, makeTextureDescriptor2D, GfxColorWriteMask } from "../gfx/platform/GfxPlatform";
 import { SceneGfx, ViewerRenderInput } from "../viewer";
 import { getDataURLForPath } from "../DataFetcher";
-import { BasicRenderTarget, makeClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from "../gfx/helpers/RenderGraphHelpers";
 import { TransparentBlack, colorNewCopy, colorLerp, colorNewFromRGBA } from '../Color';
-import { GfxRenderInstManager } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager } from '../gfx/render/GfxRenderInstManager';
 import { TextureMapping } from '../TextureHolder';
 import { nArray } from '../util';
 import { makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers';
@@ -15,12 +15,13 @@ import { DeviceProgram } from '../Program';
 import { fillMatrix4x3, fillMatrix4x4, fillColor, fillVec4 } from '../gfx/helpers/UniformBufferHelpers';
 import { mat4 } from 'gl-matrix';
 import { computeModelMatrixSRT, clamp } from '../MathHelpers';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { captureScene } from '../CaptureHelpers';
 import { downloadBuffer } from '../DownloadUtils';
 import { makeZipFile } from '../ZipFile';
 import { GridPlane } from './GridPlane';
 import { dfRange, dfShow } from '../DebugFloaters';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const pathBase = `FoxFur`;
 
@@ -43,10 +44,9 @@ function fetchPNG(path: string): Promise<ImageData> {
 }
 
 function makeTextureFromImageData(device: GfxDevice, imageData: ImageData): GfxTexture {
-    const hostAccessPass = device.createHostAccessPass();
+
     const texture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, imageData.width, imageData.height, 1));
-    hostAccessPass.uploadTextureData(texture, 0, [new Uint8Array(imageData.data.buffer)]);
-    device.submitPass(hostAccessPass);
+    device.uploadTextureData(texture, 0, [new Uint8Array(imageData.data.buffer)]);
     return texture;
 }
 
@@ -214,9 +214,7 @@ function createPoreMapTexture(device: GfxDevice, width: number, height: number):
         data[i++] = clamp(Math.random() * 0xFF + 0x80, 0, 0xFF);
         data[i++] = Math.random() * 0xFF;
     }
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadTextureData(poreTex, 0, [data]);
-    device.submitPass(hostAccessPass);
+    device.uploadTextureData(poreTex, 0, [data]);
     return poreTex;
 }
 
@@ -230,9 +228,7 @@ function createIndMapTexture(device: GfxDevice, width: number, height: number): 
         data[i++] = Math.random() * 0x10 + 0x40;
         data[i++] = Math.random() * 0x20 + 0x80;
     }
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadTextureData(indTex, 0, [data]);
-    device.submitPass(hostAccessPass);
+    device.uploadTextureData(indTex, 0, [data]);
     return indTex;
 }
 
@@ -400,9 +396,8 @@ class FurObj {
     }
 }
 
-const clearPass = makeClearRenderPassDescriptor(true, TransparentBlack);
+const clearPass = makeClearRenderPassDescriptor(TransparentBlack);
 export class SceneRenderer implements SceneGfx {
-    private renderTarget = new BasicRenderTarget();
     private renderHelper: GfxRenderHelper;
     public fur: FurObj;
     public obj: GraphObjBase[] = [];
@@ -416,28 +411,39 @@ export class SceneRenderer implements SceneGfx {
         return new OrbitCameraController();
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    private prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         this.renderHelper.pushTemplateRenderInst();
         const renderInstManager = this.renderHelper.renderInstManager;
         for (let i = 0; i < this.obj.length; i++)
             this.obj[i].prepareToRender(device, renderInstManager, viewerInput);
         renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: ViewerRenderInput): GfxRenderPass {
+    public render(device: GfxDevice, viewerInput: ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
 
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, clearPass);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, clearPass);
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, clearPass);
-        renderInstManager.drawOnPassRenderer(device, mainPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return mainPassRenderer;
     }
 
     public async film() {
@@ -478,7 +484,7 @@ export class FoxFur implements SceneDesc {
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<SceneGfx> {
         const foxFurObjBuffer = await context.dataFetcher.fetchData(`${pathBase}/foxtail.obj`);
-        const foxFurObjText = new TextDecoder('utf8').decode(foxFurObjBuffer.arrayBuffer);
+        const foxFurObjText = new TextDecoder('utf8').decode(foxFurObjBuffer.arrayBuffer as ArrayBuffer);
         const bodyTex = await fetchPNG(`${pathBase}/furtex.png`);
         const r = new SceneRenderer(device);
         const o = new FurObj(device, foxFurObjText, bodyTex);

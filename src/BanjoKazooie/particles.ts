@@ -1,6 +1,6 @@
 import { mat4, vec2, vec3, vec4 } from "gl-matrix";
 import { GfxDevice } from "../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../viewer";
 import { FlipbookRenderer, MovementController, FlipbookData, GeometryData, SpawnedObjects, BKLayer } from "./render";
 import { nArray, hexzero } from "../util";
@@ -63,9 +63,6 @@ class Particle {
     public init(manager: EmitterManager, type: ParticleType, matrix: mat4, flipbookIndex = 0): void {
         this.type = type;
         mat4.copy(this.modelMatrix, matrix);
-        vec3.set(this.velocity, 0, 0, 0);
-        vec3.set(this.targetVelocity, 0, 0, 0);
-        vec3.set(this.accel, 0, 0, 0);
 
         this.scaleX = 0;
         this.scaleY = 0;

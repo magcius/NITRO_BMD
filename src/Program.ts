@@ -22,12 +22,16 @@ export class DeviceProgram {
         this.preprocessedFrag = '';
     }
 
-    public setDefineBool(name: string, v: boolean): void {
+    public setDefineString(name: string, v: string | null): void {
         if (v)
-            this.defines.set(name, '1');
+            this.defines.set(name, v);
         else
             this.defines.delete(name);
         this.definesChanged();
+    }
+
+    public setDefineBool(name: string, v: boolean): void {
+        this.setDefineString(name, v ? '1' : null);
     }
 
     public ensurePreprocessed(vendorInfo: GfxVendorInfo): void {

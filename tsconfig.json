@@ -15,12 +15,13 @@
             "es2015",
             "es2015.promise",
             "es2016.array.include",
+            "es2017.sharedmemory",
             "ESNext.BigInt",
             "dom"
         ],
         "sourceMap": true,
         "moduleResolution": "node",
-        "module": "commonjs",
+        "module": "esNext",
         "types": [
             "gl-matrix",
             "pako",
@@ -36,6 +37,7 @@
     "exclude": [
         "**/assembly/*.ts",
         "**/worker/*.ts",
-        "**/tools/*.ts"
+        "**/tools/*.ts",
+        "*.wasm"
     ]
 }

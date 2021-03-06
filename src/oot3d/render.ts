@@ -9,13 +9,13 @@ import * as Viewer from '../viewer';
 import { DeviceProgram } from '../Program';
 import AnimationController from '../AnimationController';
 import { mat4, vec3, vec4 } from 'gl-matrix';
-import { GfxBuffer, GfxBufferUsage, GfxFormat, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxSampler, GfxDevice, GfxVertexBufferDescriptor, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxHostAccessPass, GfxInputState, GfxInputLayout, GfxCompareMode, GfxProgram, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
+import { GfxBuffer, GfxBufferUsage, GfxFormat, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxSampler, GfxDevice, GfxVertexBufferDescriptor, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxInputState, GfxInputLayout, GfxCompareMode, GfxProgram, GfxInputLayoutBufferDescriptor, makeTextureDescriptor2D } from '../gfx/platform/GfxPlatform';
 import { fillMatrix4x4, fillVec4, fillColor, fillMatrix4x3, fillVec4v } from '../gfx/helpers/UniformBufferHelpers';
 import { colorNewFromRGBA, Color, colorNewCopy, colorCopy, TransparentBlack } from '../Color';
 import { getTextureFormatName } from './pica_texture';
 import { TextureHolder, LoadedTexture, TextureMapping } from '../TextureHolder';
 import { nArray, assert } from '../util';
-import { GfxRenderInstManager, GfxRenderInst, GfxRendererLayer, makeSortKey } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, GfxRenderInst, GfxRendererLayer, makeSortKey } from '../gfx/render/GfxRenderInstManager';
 import { makeFormat, FormatFlags, FormatTypeFlags, FormatCompFlags } from '../gfx/platform/GfxPlatformFormat';
 import { Camera, computeViewMatrixSkybox, computeViewMatrix } from '../Camera';
 import { makeStaticDataBuffer, makeStaticDataBufferFromSlice } from '../gfx/helpers/BufferHelpers';
@@ -52,11 +52,7 @@ export class CtrTextureHolder extends TextureHolder<CMB.Texture> {
     public loadTexture(device: GfxDevice, texture: CMB.Texture): LoadedTexture {
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, texture.width, texture.height, texture.levels.length));
         device.setResourceName(gfxTexture, texture.name);
-
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, texture.levels.map((level) => level.pixels));
-
-        device.submitPass(hostAccessPass);
+        device.uploadTextureData(gfxTexture, 0, texture.levels.map((level) => level.pixels));
         const viewerTexture = textureToCanvas(texture);
         return { gfxTexture, viewerTexture };
     }
@@ -978,7 +974,7 @@ export class CmbInstance {
             computeViewMatrix(dst, viewerInput.camera);
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
         if (!this.visible)
             return;
 
@@ -1127,16 +1123,16 @@ export class RoomRenderer {
             this.objectRenderers[i].setEnvironmentSettings(environmentSettings);
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
         if (!this.visible)
             return;
 
         if (this.opaqueMesh !== null)
-            this.opaqueMesh.prepareToRender(device, renderInstManager, hostAccessPass, viewerInput);
+            this.opaqueMesh.prepareToRender(device, renderInstManager, viewerInput);
         if (this.transparentMesh !== null)
-            this.transparentMesh.prepareToRender(device, renderInstManager, hostAccessPass, viewerInput);
+            this.transparentMesh.prepareToRender(device, renderInstManager, viewerInput);
         for (let i = 0; i < this.objectRenderers.length; i++)
-            this.objectRenderers[i].prepareToRender(device, renderInstManager, hostAccessPass, viewerInput);
+            this.objectRenderers[i].prepareToRender(device, renderInstManager, viewerInput);
     }
 
     public destroy(device: GfxDevice) {

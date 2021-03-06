@@ -21,7 +21,8 @@ export function downloadBufferSlice(filename: string, buffer: ArrayBufferSlice, 
     downloadBlob(filename, blob);
 }
 
-export function downloadBuffer(filename: string, buffer: ArrayBuffer, type: string = 'application/octet-stream'): void {
+export function downloadBuffer(filename: string, buffer: ArrayBufferLike, type: string = 'application/octet-stream'): void {
+    buffer = buffer as ArrayBuffer;
     const blob = new Blob([buffer], { type });
     downloadBlob(filename, blob);
 }

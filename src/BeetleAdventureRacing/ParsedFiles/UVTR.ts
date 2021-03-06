@@ -4,7 +4,7 @@ import { mat4 } from "gl-matrix";
 import { UVCT, UVCTRenderer } from "./UVCT";
 import { parseMatrix } from "./Common";
 import { GfxDevice } from "../../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../../viewer";
 import { RendererStore } from "../Scenes";
 

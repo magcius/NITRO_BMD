@@ -26,20 +26,22 @@ export enum RSP_Geometry {
 
 export function translateBlendMode(geoMode: number, renderMode: number): Partial<GfxMegaStateDescriptor> {
     const out = RDP.translateRenderMode(renderMode);
-
-    if (geoMode & RSP_Geometry.G_CULL_BACK) {
-        if (geoMode & RSP_Geometry.G_CULL_FRONT) {
-            out.cullMode = GfxCullMode.FRONT_AND_BACK;
-        } else {
-            out.cullMode = GfxCullMode.BACK;
-        }
-    } else if (geoMode & RSP_Geometry.G_CULL_FRONT) {
-        out.cullMode = GfxCullMode.FRONT;
-    } else {
-        out.cullMode = GfxCullMode.NONE;
-    }
+    out.cullMode = translateCullMode(geoMode);
 
     return out;
+}
+
+export function translateCullMode(geoMode: number): GfxCullMode {
+    if (geoMode & RSP_Geometry.G_CULL_BACK) {
+        if (geoMode & RSP_Geometry.G_CULL_FRONT) {
+            return GfxCullMode.FRONT_AND_BACK;
+        } else {
+            return GfxCullMode.BACK;
+        }
+    } else if (geoMode & RSP_Geometry.G_CULL_FRONT) {
+        return GfxCullMode.FRONT;
+    }
+    return GfxCullMode.NONE;
 }
 
 export class DrawCall extends F3DEX.DrawCall {

@@ -12,7 +12,7 @@ import { BTIData } from "../../Common/JSYSTEM/JUTTexture";
 import { GfxDevice } from "../../gfx/platform/GfxPlatform";
 import { isEqualStageName } from "./MiscActor";
 import { ViewerRenderInput } from "../../viewer";
-import { GfxRenderInstManager } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 import { TDDraw } from "../DDraw";
 import { GXMaterialHelperGfx, MaterialParams, PacketParams, ColorKind } from '../../gx/gx_render';
 import { GXMaterialBuilder } from '../../gx/GXMaterialBuilder';

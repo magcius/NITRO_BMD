@@ -150,9 +150,8 @@ export class DDSTextureHolder extends TextureHolder<DDS> {
             dimension: GfxTextureDimension.n2D, pixelFormat,
             width: textureEntry.width, height: textureEntry.height, depth: 1, numLevels: textureEntry.levels.length,
         });
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, levelDatas);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, levelDatas);
 
         const extraInfo = new Map<string, string>();
         extraInfo.set('Format', textureEntry.format);

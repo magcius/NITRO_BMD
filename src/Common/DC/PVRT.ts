@@ -179,9 +179,8 @@ export class PVRTextureHolder extends TextureHolder<PVR_Texture> {
 
         const gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_SRGB, textureEntry.width, textureEntry.height, textureEntry.levels.length));
     
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(gfxTexture, 0, textureEntry.levels.reverse().map((level) => level.data));
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(gfxTexture, 0, textureEntry.levels.reverse().map((level) => level.data));
 
         const viewerTexture: Viewer.Texture = textureToCanvas(textureEntry);
 

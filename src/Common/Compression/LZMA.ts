@@ -421,7 +421,7 @@ export function decodeLZMAProperties(buffer: ArrayBufferSlice): LZMAProperties {
     };
 }
 
-export function decompress(inBuffer: ArrayBufferSlice, properties: LZMAProperties, maxSize: number): ArrayBuffer {
+export function decompress(inBuffer: ArrayBufferSlice, properties: LZMAProperties, maxSize: number): ArrayBufferLike {
     const inStream = new InputStream(inBuffer);
     const outBuffer = new Uint8Array(maxSize);
 

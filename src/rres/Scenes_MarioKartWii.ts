@@ -13,11 +13,11 @@ import { mat4 } from 'gl-matrix';
 import { RRESTextureHolder, MDL0Model, MDL0ModelInstance } from './render';
 import AnimationController from '../AnimationController';
 import { BasicGXRendererHelper, fillSceneParamsDataOnTemplate } from '../gx/gx_render';
-import { GfxDevice, GfxHostAccessPass, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform';
+import { GfxDevice, GfxFrontFaceMode } from '../gfx/platform/GfxPlatform';
 import { computeModelMatrixSRT, computeModelMatrixS, MathConstants, scaleMatrix } from '../MathHelpers';
 import { SceneContext, GraphObjBase } from '../SceneBase';
 import { EggLightManager, parseBLIGHT } from './Egg';
-import { GfxRendererLayer, GfxRenderInstManager } from '../gfx/render/GfxRenderer';
+import { GfxRendererLayer, GfxRenderInstManager } from '../gfx/render/GfxRenderInstManager';
 import { CameraController } from '../Camera';
 
 class ModelCache {
@@ -111,7 +111,7 @@ class MarioKartWiiRenderer extends BasicGXRendererHelper {
         return [renderHacksPanel];
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.animationController.setTimeInMilliseconds(viewerInput.time);
 
         if (this.eggLightManager !== null)
@@ -122,7 +122,7 @@ class MarioKartWiiRenderer extends BasicGXRendererHelper {
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.baseObjects.length; i++)
             this.baseObjects[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 

@@ -7,7 +7,7 @@ import { assert, readString } from '../util';
 // XXX(jstpierre): I have no idea what the "real" format is but this
 // seems to be the format of all .dcx files I can find...
 
-export function decompressBuffer(buffer: ArrayBufferSlice): ArrayBuffer {
+export function decompressBuffer(buffer: ArrayBufferSlice): ArrayBufferLike {
     const view = buffer.createDataView();
     assert(readString(buffer, 0x00, 0x04, false) == 'DCX\0');
     assert(view.getUint32(0x04, true) == 0x0100);

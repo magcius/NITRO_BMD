@@ -6,7 +6,7 @@ import { divideByW, ScreenSpaceProjection } from "./Camera";
 import { vec4, vec3, mat4, ReadonlyMat4, ReadonlyVec3, ReadonlyVec4 } from "gl-matrix";
 import { nArray, assert, assertExists, hexdump, magicstr } from "./util";
 import { UI, Slider } from "./ui";
-import { getMatrixTranslation, getMatrixAxisX, getMatrixAxisY, getMatrixAxisZ, MathConstants, transformVec3Mat4w0, Vec3UnitX } from "./MathHelpers";
+import { getMatrixTranslation, getMatrixAxisX, getMatrixAxisY, getMatrixAxisZ, MathConstants, transformVec3Mat4w0, Vec3UnitX, lerp } from "./MathHelpers";
 import ArrayBufferSlice from "./ArrayBufferSlice";
 import { downloadBufferSlice, downloadBuffer } from "./DownloadUtils";
 
@@ -311,6 +311,27 @@ export function drawWorldSpaceCircle(ctx: CanvasRenderingContext2D, clipFromWorl
     }
 }
 
+export function drawWorldSpaceFan(ctx: CanvasRenderingContext2D, clipFromWorldMatrix: ReadonlyMat4, center: ReadonlyVec3, radius: number, front: ReadonlyVec3, angle: number, axis: ReadonlyVec3): void {
+    const nPoints = 32;
+    for (let i = 0; i < nPoints; i++) {
+        const t0 = lerp(-angle, angle, (i + 0) / (nPoints - 1));
+        mat4.fromRotation(scratchMatrix, t0, axis);
+        transformVec3Mat4w0(scratchVec3a, scratchMatrix, front);
+        vec3.scaleAndAdd(scratchVec3a, center, scratchVec3a, radius);
+        if (i === 0)
+            drawWorldSpaceLine(ctx, clipFromWorldMatrix, center, scratchVec3a);
+
+        const t1 = lerp(-angle, angle, (i + 1) / (nPoints - 1));
+        mat4.fromRotation(scratchMatrix, t1, axis);
+        transformVec3Mat4w0(scratchVec3b, scratchMatrix, front);
+        vec3.scaleAndAdd(scratchVec3b, center, scratchVec3b, radius);
+        if (i === nPoints - 1)
+            drawWorldSpaceLine(ctx, clipFromWorldMatrix, center, scratchVec3b);
+
+        drawWorldSpaceLine(ctx, clipFromWorldMatrix, scratchVec3a, scratchVec3b);
+    }
+}
+
 export function drawWorldSpaceCylinder(ctx: CanvasRenderingContext2D, clipFromWorldMatrix: ReadonlyMat4, center: ReadonlyVec3, radius: number, height: number, axis: ReadonlyVec3, nPoints: number = 32): void {
     for (let i = 0; i < nPoints; i++) {
         const t0 = ((i + 0) / nPoints) * MathConstants.TAU;
@@ -342,6 +363,7 @@ interface TextOptions {
     shadowColor?: string;
     shadowBlur?: number;
     outline?: number;
+    align?: CanvasTextAlign;
 }
 
 export function drawScreenSpaceText(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: Color = Magenta, options: TextOptions = {}): void {
@@ -360,6 +382,7 @@ export function drawScreenSpaceText(ctx: CanvasRenderingContext2D, x: number, y:
 
     ctx.shadowColor = options.shadowColor ?? 'black';
     ctx.shadowBlur = options.shadowBlur ?? 0;
+    ctx.textAlign = options.align ?? 'start';
     ctx.fillText(text, x, y);
     ctx.shadowColor = 'black';
     ctx.shadowBlur = 0;
@@ -454,7 +477,7 @@ export function interactiveVizSliderSelect(items: any[], fieldName: string = 'vi
         return item.name || item.constructor.name;
     }, (index) => {
         visibleItems.forEach((v) => v[fieldName] = true);
-        if (index >= visibleItems.length)
+        if (index >= visibleItems.length || index < 0)
             return;
         const item = visibleItems[index];
         const origIndex = items.indexOf(item);

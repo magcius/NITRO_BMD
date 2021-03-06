@@ -3,12 +3,12 @@ import { J3DModelInstance, BMDModelMaterialData, JointMatrixCalcNoAnm, J3DModelD
 import AnimationController from "../../../AnimationController";
 import { assert } from "../../../util";
 import { Camera } from "../../../Camera";
-import { TTK1, TRK1, TPT1, ANK1, JointTransformInfo, TRK1AnimationEntry, TTK1AnimationEntry, TPT1AnimationEntry, calcTexMtx_Maya, calcTexMtx_Basic, LoopMode, AnimationBase } from "./J3DLoader";
+import { TTK1, TRK1, TPT1, ANK1, ANF1, BCA, JointTransformInfo, TRK1AnimationEntry, TTK1AnimationEntry, TPT1AnimationEntry, calcTexMtx_Maya, calcTexMtx_Basic, LoopMode, AnimationBase } from "./J3DLoader";
 import { GfxDevice } from "../../../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager } from "../../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../../../viewer";
 import { mat4, vec3 } from "gl-matrix";
-import { calcJointAnimationTransform, calcJointMatrixFromTransform, sampleAnimationData } from "./J3DGraphAnimator";
+import { calcANF1JointAnimationTransform, calcANK1JointAnimationTransform, calcJointMatrixFromTransform, sampleAnimationData } from "./J3DGraphAnimator";
 import { ColorKind } from "../../../gx/gx_render";
 import { Color } from "../../../Color";
 import * as GX from "../../../gx/gx_enum";
@@ -50,7 +50,34 @@ class JointMatrixCalcANK1 {
         if (entry !== undefined) {
             const frame = this.animationController.getTimeInFrames();
             const animFrame = getAnimFrame(this.ank1, frame);
-            calcJointAnimationTransform(scratchTransform, entry, animFrame);
+            const animFrame1 = getAnimFrame(this.ank1, frame + 1);
+            calcANK1JointAnimationTransform(scratchTransform, entry, animFrame, animFrame1);
+            transform = scratchTransform;
+        } else {
+            transform = jnt1.transform;
+        }
+
+        const loadFlags = modelData.bmd.inf1.loadFlags;
+        calcJointMatrixFromTransform(dst, transform, loadFlags, jnt1, shapeInstanceState);
+
+        vec3.copy(shapeInstanceState.parentScale, transform.scale);
+    }
+}
+
+class JointMatrixCalcANF1 {
+    constructor(public animationController: AnimationController, public anf1: ANF1) {
+    }
+
+    public calcJointMatrix(dst: mat4, modelData: J3DModelData, i: number, shapeInstanceState: ShapeInstanceState): void {
+        const entry = this.anf1.jointAnimationEntries[i];
+        const jnt1 = modelData.bmd.jnt1.joints[i];
+
+        let transform: JointTransformInfo;
+        if (entry !== undefined) {
+            const frame = this.animationController.getTimeInFrames();
+            const animFrame = getAnimFrame(this.anf1, frame);
+            const animFrame1 = getAnimFrame(this.anf1, frame + 1);
+            calcANF1JointAnimationTransform(scratchTransform, entry, animFrame, animFrame1);
             transform = scratchTransform;
         } else {
             transform = jnt1.transform;
@@ -225,6 +252,10 @@ export class J3DModelInstanceSimple extends J3DModelInstance {
      */
     public bindANK1(ank1: ANK1 | null, animationController: AnimationController = this.animationController): void {
         this.jointMatrixCalc = ank1 !== null ? new JointMatrixCalcANK1(animationController, ank1) : new JointMatrixCalcNoAnm();
+    }
+
+    public bindANF1(anf1: ANF1 | null, animationController: AnimationController = this.animationController) : void {
+        this.jointMatrixCalc = anf1 !== null ? new JointMatrixCalcANF1(animationController, anf1) : new JointMatrixCalcNoAnm();
     }
 
     private calcSkybox(camera: Camera): void {

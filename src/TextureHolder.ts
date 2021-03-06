@@ -3,11 +3,12 @@ import * as Viewer from './viewer';
 import { GfxSampler, GfxTexture, GfxDevice } from './gfx/platform/GfxPlatform';
 
 export interface TextureOverride {
-    gfxTexture: GfxTexture;
+    gfxTexture: GfxTexture | null;
     gfxSampler?: GfxSampler;
     width: number;
     height: number;
     flipY: boolean;
+    lateBinding?: string;
 }
 
 export interface TextureBase {
@@ -46,6 +47,8 @@ export class TextureMapping {
         this.width = textureOverride.width;
         this.height = textureOverride.height;
         this.flipY = textureOverride.flipY;
+        if (textureOverride.lateBinding)
+            this.lateBinding = textureOverride.lateBinding;
         return true;
     }
 
@@ -130,10 +133,7 @@ export abstract class TextureHolder<TextureType extends TextureBase> {
         return null;
     }
 
-    public setTextureOverride(name: string, textureOverride: TextureOverride, checkExisting: boolean = true): void {
-        // Only allow setting texture overrides for textures that exist.
-        if (checkExisting && !this.hasTexture(name))
-           throw new Error(`Trying to override non-existent texture ${name}`);
+    public setTextureOverride(name: string, textureOverride: TextureOverride, checkExisting: boolean = false): void {
         this.textureOverrides.set(name, textureOverride);
     }
 

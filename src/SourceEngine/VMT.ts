@@ -45,10 +45,17 @@ class ValveKeyValueParser {
 
     private skipcomment2(): boolean {
         if (this.chew() === '/') {
-            assert(this.chew(true) === '/');
-            while (this.chew(true) !== '\n')
-                ;
-            return true;
+            const ch = this.chew(true);
+            if (ch === '/') {
+                while (this.chew(true) !== '\n')
+                    ;
+                return true;
+            } else if (ch === '*') {
+                this.pos = this.S.indexOf('*/', this.pos) + 2;
+                return true;
+            } else {
+                throw "whoops";
+            }
         } else {
             this.spit();
             return false;
@@ -151,7 +158,15 @@ function pairs2obj(pairs: VKFPair[], recurse: boolean = false): any {
     const o: any = {};
     for (let i = 0; i < pairs.length; i++) {
         const [k, v] = pairs[i];
-        o[k] = (recurse && typeof v === 'object') ? pairs2obj(v) : v;
+        const vv = (recurse && typeof v === 'object') ? pairs2obj(v) : v;
+
+        if (k in o) {
+            if (!Array.isArray(o[k]))
+                o[k] = [o[k]];
+            o[k].push(vv);
+        } else {
+            o[k] = vv;
+        }
     }
     return o;
 }
@@ -187,9 +202,8 @@ export async function parseVMT(filesystem: SourceFileSystem, path: string, depth
             if (k === 'proxies' || k === 'replace' || k === 'insert')
                 continue;
 
-            if (typeof vmtObj[k] === 'object') {
+            if (typeof vmtObj[k] === 'object' && !Array.isArray(vmtObj[k])) {
                 // The result should be an array of pairs. Convert to object.
-                const pairs = vmtObj[k] as VKFPair[];
                 vmtObj[k] = pairs2obj(vmtObj[k], true);
             }
         }

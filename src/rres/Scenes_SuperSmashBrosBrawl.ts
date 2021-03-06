@@ -6,7 +6,7 @@ import * as UI from '../ui';
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { assert, readString, align } from "../util";
-import { GfxDevice, GfxHostAccessPass } from '../gfx/platform/GfxPlatform';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
 import { RRESTextureHolder, MDL0Model, MDL0ModelInstance } from './render';
 import AnimationController from '../AnimationController';
 import { GXMaterialHacks } from '../gx/gx_material';
@@ -90,13 +90,13 @@ class BrawlRenderer extends BasicGXRendererHelper {
         return panels;
     }
 
-    protected prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    protected prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.animationController.setTimeInMilliseconds(viewerInput.time);
         const template = this.renderHelper.pushTemplateRenderInst();
         fillSceneParamsDataOnTemplate(template, viewerInput);
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
     }
 

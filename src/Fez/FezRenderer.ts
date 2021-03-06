@@ -1,9 +1,9 @@
 
 import * as Viewer from '../viewer';
-import { GfxDevice, GfxRenderPass, GfxBindingLayoutDescriptor, GfxHostAccessPass, GfxMegaStateDescriptor, GfxCullMode, GfxFrontFaceMode, GfxBlendMode, GfxBlendFactor, GfxSampler, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxProgramDescriptorSimple } from "../gfx/platform/GfxPlatform";
-import { BasicRenderTarget, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
-import { GfxRenderInstManager, GfxRendererLayer, makeSortKeyOpaque } from "../gfx/render/GfxRenderer";
+import { GfxDevice, GfxBindingLayoutDescriptor, GfxMegaStateDescriptor, GfxCullMode, GfxFrontFaceMode, GfxBlendMode, GfxBlendFactor, GfxSampler, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxProgramDescriptorSimple } from "../gfx/platform/GfxPlatform";
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
+import { GfxRenderInstManager, GfxRendererLayer, makeSortKeyOpaque } from "../gfx/render/GfxRenderInstManager";
 import { fillMatrix4x4, fillMatrix4x3, fillVec4, fillVec4v } from "../gfx/helpers/UniformBufferHelpers";
 import { mat4, vec3, vec2, vec4 } from "gl-matrix";
 import { computeViewMatrix, CameraController } from "../Camera";
@@ -20,6 +20,7 @@ import { ModelCache } from "./Scenes_Fez";
 import { SkyRenderer, SkyData } from './Sky';
 import { GeometryData } from './GeometryData';
 import { Fez_Level, Fez_BackgroundPlane } from './XNB_Fez';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 class FezProgram {
     public static ub_SceneParams = 0;
@@ -106,7 +107,6 @@ class FezLevelRenderData {
 
 export class FezRenderer implements Viewer.SceneGfx {
     private program: GfxProgramDescriptorSimple;
-    private renderTarget = new BasicRenderTarget();
     private renderHelper: GfxRenderHelper;
     private modelMatrix: mat4 = mat4.create();
     private backgroundPlaneStaticData: BackgroundPlaneStaticData;
@@ -187,7 +187,7 @@ export class FezRenderer implements Viewer.SceneGfx {
         c.setSceneMoveSpeedMult(16/60);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput, renderInstManager: GfxRenderInstManager) {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput, renderInstManager: GfxRenderInstManager) {
         const template = this.renderHelper.pushTemplateRenderInst();
         template.setBindingLayouts(bindingLayouts);
         const gfxProgram = renderInstManager.gfxRenderCache.createProgramSimple(device, this.program);
@@ -214,21 +214,32 @@ export class FezRenderer implements Viewer.SceneGfx {
 
         renderInstManager.popTemplateRenderInst();
 
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.prepareToRender(device, hostAccessPass, viewerInput, renderInstManager);
-        device.submitPass(hostAccessPass);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        renderInstManager.drawOnPassRenderer(device, passRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput, renderInstManager);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return passRenderer;
     }
 
     public destroy(device: GfxDevice): void {
@@ -237,7 +248,6 @@ export class FezRenderer implements Viewer.SceneGfx {
         this.backgroundPlaneStaticData.destroy(device);
 
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
     }
 }
 

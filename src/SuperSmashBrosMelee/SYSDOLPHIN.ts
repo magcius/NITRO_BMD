@@ -649,9 +649,12 @@ function runVertices(ctx: HSD_LoadContext, vtxDescBuffer: ArrayBufferSlice, dlBu
 
     let idx = 0x00;
     while (true) {
-        const attr = view.getUint32(idx + 0x00);
+        let attr = view.getUint32(idx + 0x00);
         if (attr === GX.Attr.NULL)
             break;
+
+        if (attr === GX.Attr._NBT)
+            attr = GX.Attr.NRM;
 
         const attrType: GX.AttrType = view.getUint32(idx + 0x04);
         const compCnt: GX.CompCnt = view.getUint32(idx + 0x08);

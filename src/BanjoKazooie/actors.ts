@@ -5,7 +5,7 @@ import { MathConstants, lerp, angleDist, scaleMatrix, randomRange } from '../Mat
 import { getPointHermite } from '../Spline';
 import { brentildaWandConfig, ConfigurableEmitter, Emitter, farJumpPadConfig, JumpPadEmitter, lavaRockLaunchFlameConfig, nearJumpPadConfig, ParticleType, SparkleColor, Sparkler, lavaRockBigTrailConfig, lavaRockSmallTrailConfig, MultiEmitter, lavaRockExplosionConfig, fireballIndex, lavaSmokeIndex, emitAt, lavaRockShardsConfig, lavaRockSmokeConfig, LavaRockEmitter, StreamEmitter, fromBB, SceneEmitterHolder, SnowballChunkEmitter } from './particles';
 import { ViewerRenderInput } from '../viewer';
-import { makeSortKey, GfxRendererLayer, GfxRenderInstManager } from '../gfx/render/GfxRenderer';
+import { makeSortKey, GfxRendererLayer, GfxRenderInstManager } from '../gfx/render/GfxRenderInstManager';
 import { GfxDevice } from '../gfx/platform/GfxPlatform';
 
 export class ClankerTooth extends GeometryRenderer {

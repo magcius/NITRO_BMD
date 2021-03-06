@@ -2,10 +2,11 @@
 import * as BCSV from '../luigis_mansion/bcsv';
 import { vec3 } from 'gl-matrix';
 import { MathConstants } from '../MathHelpers';
-import { fallback } from '../util';
+import { assertExists, fallback } from '../util';
 import type { SceneObjHolder } from './Main';
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { _T } from '../gfx/platform/GfxPlatformImpl';
+import { ZoneAndLayer } from './LiveActor';
 
 export function getJMapInfoArg0(infoIter: JMapInfoIter) { return infoIter.getValueNumberNoInit('Obj_arg0'); }
 export function getJMapInfoArg1(infoIter: JMapInfoIter) { return infoIter.getValueNumberNoInit('Obj_arg1'); }
@@ -110,6 +111,16 @@ export class JMapIdInfo {
 
 function getPlacedZoneId(sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter): number {
     return sceneObjHolder.stageDataHolder.findPlacedStageDataHolder(infoIter)!.zoneId;
+}
+
+function getJMapInfoLinkID(infoIter: JMapInfoIter) {
+    return assertExists(infoIter.getValueNumber('l_id'));
+}
+
+export function iterChildObj(sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter, callback: (childInfoIter: JMapInfoIter, zoneAndLayer: ZoneAndLayer) => void): void {
+    const linkID = getJMapInfoLinkID(infoIter);
+    const stageDataHolder = sceneObjHolder.stageDataHolder.findPlacedStageDataHolder(infoIter)!;
+    stageDataHolder.iterChildObjInternal(linkID, callback);
 }
 
 export function createJMapIdInfoFromIter(sceneObjHolder: SceneObjHolder, infoId: number, infoIter: JMapInfoIter): JMapIdInfo {

@@ -152,7 +152,7 @@ const enum MapSectionType {
     EFFECT,
     ANIMATED_TEXTURE,
     UNUSED,
-    PATH,
+    COMBINED_EFFECT,
 }
 
 export const enum LevelEffectType {
@@ -758,16 +758,20 @@ export function parseLevelGeometry(buffer: ArrayBufferSlice, textureData: LevelT
             const polar = view.getFloat32(offs + 0x20, true);
             mat4.fromXRotation(lightDirection, azimuthal * MathConstants.DEG_TO_RAD);
             mat4.rotateY(lightDirection, lightDirection, polar * MathConstants.DEG_TO_RAD);
-        } else if (sectionType === MapSectionType.EFFECT) {
+        } else if (sectionType === MapSectionType.EFFECT
+            // only in Zanarkand overpass
+            || sectionType === MapSectionType.COMBINED_EFFECT) {
+            const isCombined = sectionType === MapSectionType.COMBINED_EFFECT;
             const justAppend = view.getUint32(offs - 0x20, true) === 0;
             if (justAppend) {
-                effects.push(parseEffect(view, offs, sectionLength >>> 7));
+                const shift = isCombined ? 5 : 7;
+                effects.push(parseEffect(view, offs, sectionLength >>> shift, isCombined));
             } else {
                 const index = view.getUint32(offs - 0x1C, true);
                 const effectCount = view.getUint32(offs - 0x18, true);
                 assert(effects[index] === undefined);
 
-                effects[index] = parseEffect(view, offs, effectCount);
+                effects[index] = parseEffect(view, offs, effectCount, isCombined);
             }
         } else if (sectionType === MapSectionType.ANIMATED_TEXTURE) {
             const index = view.getUint32(offs + 0x00, true);
@@ -810,7 +814,6 @@ export function parseLevelGeometry(buffer: ArrayBufferSlice, textureData: LevelT
                     if (textures[j].tex0.tbp0 === dbp && textures[j].tex0.cbp === cbp && textures[j].tex0.csa === paletteOffset) {
                         textureIndices.push([j]);
                         textures[j].name += "_00"
-                        console.log(textures[j].name)
                     }
                 }
 
@@ -847,8 +850,6 @@ export function parseLevelGeometry(buffer: ArrayBufferSlice, textureData: LevelT
                 animatedTextures[index].effect = animEffect;
                 assert(effectCount === 1 && animEffect.type === EffectType.TEXTURE);
             }
-        } else if (sectionType === MapSectionType.PATH) {
-            // only in Zanarkand overpass? and not assigned to any part initially
         } else
             throw `unfamiliar map section type ${sectionType}`;
 
@@ -862,6 +863,7 @@ export const enum KeyframeFormat {
     LINEAR,
     SPLINE,
     CONSTANT,
+    COMBINED,
 }
 
 interface Keyframe {
@@ -876,6 +878,7 @@ export const enum EffectType {
     ROTATION,
     PARAMETER,
     TEXTURE,
+    COMBINED = 5,
 }
 
 export interface PartEffect {
@@ -884,15 +887,23 @@ export interface PartEffect {
     keyframes: Keyframe[];
 }
 
-export function parseEffect(view: DataView, offset: number, length: number): PartEffect {
-    const type: EffectType = view.getUint32(offset + 0x08, true);
+export interface ActiveEffect {
+    active: boolean;
+    runOnce: boolean;
+    partIndex: number;
+    effectIndex: number;
+    startFrame: number;
+}
+
+export function parseEffect(view: DataView, offset: number, length: number, isCombined: boolean): PartEffect {
+    const type: EffectType = isCombined ? EffectType.COMBINED : view.getUint32(offset + 0x08, true);
 
     const keyframes: Keyframe[] = [];
 
     let start = 0;
 
     for (let i = 0; i < length; i++) {
-        const format: KeyframeFormat = view.getUint16(offset + 0x02, true);
+        const format: KeyframeFormat = isCombined ? KeyframeFormat.COMBINED : view.getUint16(offset + 0x02, true);
         const duration = Math.max(view.getUint32(offset + 0x04, true), 1);
         const data: vec3[] = [];
 
@@ -914,12 +925,151 @@ export function parseEffect(view: DataView, offset: number, length: number): Par
                     vec3FromView(view, offset + 0x40, true),
                 );
             } break;
+            case KeyframeFormat.COMBINED: {
+                data.push(
+                    vec3FromView(view, offset + 0x08, true),
+                    vec3FromView(view, offset + 0x14, true),
+                );
+            } break;
         }
 
         keyframes.push({ format, data, start, duration });
         start += duration;
-        offset += 0x80;
+        offset += isCombined ? 0x20 : 0x80;
     }
 
     return { type, keyframes, length: start };
+}
+
+interface MapPoint {
+    pos: vec3;
+    heading: number;
+    entrypoint: number;
+}
+
+export const enum ControllerType {
+    NONE,
+    MOTION,
+    PLAYER_EDGE,
+    PLAYER_ZONE,
+    UNKNOWN,
+    EDGE,
+    ZONE,
+}
+
+export interface ControllerSpec {
+    type: ControllerType;
+    entrypoints: Uint32Array;
+    labels: Uint32Array;
+}
+
+export interface ScriptData {
+    intConsts: Int32Array;
+    floatConsts: Float32Array;
+    code: DataView;
+
+    controllers: ControllerSpec[]
+
+    mapPoints: MapPoint[];
+}
+
+export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
+    assert(readString(buffer, 0, 4) === "EV01");
+    const view = buffer.createDataView();
+
+    const scriptStart = view.getUint32(0x04, true);
+    const stringsStart = view.getUint32(0x08, true);
+
+    const mapStart = view.getUint32(scriptStart + 0x04, true);
+    const mapEnd = view.getUint32(scriptStart + 0x08, true);
+
+    // numbers indicating which controllers are of which sizes?
+
+    // these can correspond to different pause menu location names
+    const zoneCount = view.getUint16(scriptStart + 0x1E, true);
+    const zoneStart = view.getUint32(scriptStart + 0x28, true);
+    const moreDataStart = view.getUint32(scriptStart + 0x2C, true);
+
+    const instructionStart = view.getUint32(scriptStart + 0x30, true);
+    const controllerCount = view.getUint16(scriptStart + 0x34, true);
+    const controllerStart = view.getUint32(scriptStart + 0x38, true);
+
+    const mapPoints: MapPoint[] = [];
+    for (let mapOffs = mapStart + scriptStart; mapOffs < mapEnd + scriptStart; mapOffs += 0x20) {
+        const id = view.getUint16(mapOffs + 0x00, true); // should probably check these are all the same
+        const entrypoint = view.getUint16(mapOffs + 0x06, true);
+        const heading = view.getFloat32(mapOffs + 0x08, true);
+        const x = view.getFloat32(mapOffs + 0x0C, true);
+        const y = view.getFloat32(mapOffs + 0x10, true);
+        const z = view.getFloat32(mapOffs + 0x14, true);
+
+        mapPoints.push({ entrypoint, heading, pos: vec3.fromValues(x, y, z) });
+    }
+
+
+    let bufferDescriptionStart = -1;
+    let bufferDescriptionCount = -1;
+    let intConstStart = -1;
+    let intConstCount = -1;
+    let floatConstStart = -1;
+    let floatConstCount = -1;
+    let sharedDataStart = -1;
+
+    const match = function (a: number, b: number): number {
+        if (a >= 0)
+            assert(a === b);
+        return b;
+    }
+
+    const controllers: ControllerSpec[] = [];
+    let offset = controllerStart + scriptStart;
+    for (let i = 0; i < controllerCount; i++, offset += 0x34) {
+        // offsets are given as if the structre were variable length, but it isn't
+        assert(view.getUint32(scriptStart + 0x38 + 4 * i, true) === offset - scriptStart);
+
+        const type: ControllerType = view.getUint8(offset + 0x00);
+        const bufferCount = view.getUint16(offset + 0x02, true);
+        const intCount = view.getUint16(offset + 0x04, true);
+        const floatCount = view.getUint16(offset + 0x06, true);
+        const entryCount = view.getUint16(offset + 0x08, true);
+        const labelCount = view.getUint16(offset + 0x0A, true);
+        const unusedLength = view.getUint32(offset + 0x0C, true);
+        const privateLength = view.getUint32(offset + 0x10, true);
+
+        const bufferStart = view.getUint32(offset + 0x14, true);
+        const intStart = view.getUint32(offset + 0x18, true);
+        const floatStart = view.getUint32(offset + 0x1C, true);
+        const entryStart = view.getUint32(offset + 0x20, true);
+        const labelStart = view.getUint32(offset + 0x24, true);
+        const unusedDataStart = view.getUint32(offset + 0x28, true);
+        const privateDataStart = view.getUint32(offset + 0x2C, true);
+        const sharedStart = view.getUint32(offset + 0x30, true);
+
+        assert(unusedDataStart === 0);
+
+        bufferDescriptionStart = match(bufferDescriptionStart, bufferStart);
+        bufferDescriptionCount = match(bufferDescriptionCount, bufferCount);
+        intConstStart = match(intConstStart, intStart);
+        floatConstStart = match(floatConstStart, floatStart);
+        intConstCount = match(intConstCount, intCount);
+        floatConstCount = match(floatConstCount, floatCount);
+        sharedDataStart = match(sharedDataStart, sharedStart);
+
+        const entrypoints = new Uint32Array(buffer.arrayBuffer, entryStart + scriptStart, entryCount);
+        const labels = new Uint32Array(buffer.arrayBuffer, labelStart + scriptStart, labelCount);
+
+        if (privateDataStart !== 0) {
+            for (let j = 0; j < privateLength; j++)
+                assert(view.getUint8(scriptStart + privateDataStart + j) === 0)
+        }
+
+        controllers.push({ type, entrypoints, labels })
+    }
+
+    const intConsts = new Int32Array(buffer.arrayBuffer, scriptStart + intConstStart, intConstCount);
+    const floatConsts = new Float32Array(buffer.arrayBuffer, scriptStart + floatConstStart, floatConstCount);
+    const instructionEnd = sharedDataStart < 0 ? moreDataStart : sharedDataStart;
+    const code = buffer.createDataView(instructionStart + scriptStart, instructionEnd - instructionStart);
+
+    return { mapPoints, intConsts, floatConsts, code, controllers };
 }

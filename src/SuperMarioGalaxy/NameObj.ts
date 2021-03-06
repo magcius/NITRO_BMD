@@ -4,11 +4,11 @@ import { SceneObjHolder } from "./Main";
 import { ViewerRenderInput } from "../viewer";
 import { GfxDevice, GfxNormalizedViewportCoords } from "../gfx/platform/GfxPlatform";
 import { Camera } from "../Camera";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { gfxRenderInstCompareSortKey, GfxRenderInstExecutionOrder, GfxRenderInstList, GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { LiveActor } from "./LiveActor";
 import { JMapInfoIter } from "./JMapInfo";
 import { mat4 } from "gl-matrix";
-import { assert } from "../util";
+import { assert, nullify } from "../util";
 import { ub_SceneParamsBufferSize } from "../gx/gx_render";
 import { GX_Program } from "../gx/gx_material";
 
@@ -26,7 +26,9 @@ export const enum MovementType {
     MsgSharedGroup                 = 0x06,
     DemoDirector                   = 0x0B,
     AreaObj                        = 0x0D,
-    Model3DFor2D                   = 0x0E,
+    Layout                         = 0x0E,
+    LayoutDecoration               = 0x0F,
+    LayoutOnPause                  = 0x12,
     ImageEffect                    = 0x17,
     SwitchWatcherHolder            = 0x1B,
     Planet                         = 0x1D,
@@ -55,7 +57,8 @@ export const enum CalcAnimType {
     Npc                            = 0x06,
     Enemy                          = 0x08,
     MapObjDecoration               = 0x0B,
-    Model3DFor2D                   = 0x0D,
+    Layout                         = 0x0D,
+    LayoutDecoration               = 0x0E,
     Item                           = 0x10,
 }
 
@@ -93,6 +96,9 @@ export const enum DrawBufferType {
     AstroDomeSky                        = 0x23,
     Model3DFor2D                        = 0x24,
     MirrorMapObj                        = 0x27,
+
+    // noclip additions
+    AstroMapBoard                       = 0x60,
 }
 
 export const enum DrawType {
@@ -109,6 +115,7 @@ export const enum DrawType {
     ElectricRailHolder             = 0x0E,
     WarpPodPath                    = 0x18,
     WaterPlant                     = 0x1B,
+    EyeBeamer                      = 0x1C,
     Flag                           = 0x1D,
     AstroDomeSkyClear              = 0x1E,
     AstroDomeOrbit                 = 0x1F,
@@ -131,28 +138,6 @@ export const enum DrawType {
 
     GravityExplainer               = 0x200,
 };
-
-export const enum OpaXlu {
-    OPA, XLU,
-}
-
-export const enum FilterKeyBase {
-    DRAW_BUFFER_OPA = 0x0200,
-    DRAW_BUFFER_XLU = 0x0100,
-
-    EXECUTE         = 0x2000,
-}
-
-export function createFilterKeyForDrawBufferType(xlu: OpaXlu, drawBufferType: DrawBufferType): number {
-    if (xlu === OpaXlu.OPA)
-        return FilterKeyBase.DRAW_BUFFER_OPA | drawBufferType;
-    else
-        return FilterKeyBase.DRAW_BUFFER_XLU | drawBufferType;
-}
-
-export function createFilterKeyForDrawType(drawType: DrawType): number {
-    return FilterKeyBase.EXECUTE | drawType;
-}
 
 export class NameObj {
     public nameObjExecuteInfoIndex: number = -1;
@@ -259,6 +244,7 @@ export class NameObjHolder {
 // This is also NameObjExecuteHolder and NameObjListExecutor for our purposes... at least for now.
 export class SceneNameObjListExecutor {
     public drawBufferHolder: DrawBufferHolder;
+    public executeDrawRenderInstList: GfxRenderInstList[] = [];
     public nameObjExecuteInfos: NameObjExecuteInfo[] = [];
 
     constructor() {
@@ -326,15 +312,16 @@ export class SceneNameObjListExecutor {
             const executeInfo = this.nameObjExecuteInfos[i];
             const nameObj = executeInfo.nameObj;
 
-            if (this.nameObjExecuteInfos[i].drawType !== -1) {
-                // If this is an execute draw, then set up our filter key correctly...
-                const template = renderInstManager.pushTemplateRenderInst();
-                template.filterKey = createFilterKeyForDrawType(executeInfo.drawType);
-                // HACK(jstpierre): By default, the execute scene params are 3D. We should replace executeDrawAll with GfxRenderInstList eventually...
-                template.setUniformBufferOffset(GX_Program.ub_SceneParams, sceneObjHolder.renderParams.sceneParamsOffs3D, ub_SceneParamsBufferSize);
-                nameObj.draw(sceneObjHolder, renderInstManager, viewerInput);
-                renderInstManager.popTemplateRenderInst();
-            }
+            if (executeInfo.drawType === DrawType.None)
+                continue;
+
+            renderInstManager.setCurrentRenderInstList(this.ensureRenderInstListExecute(executeInfo.drawType));
+
+            const template = renderInstManager.pushTemplateRenderInst();
+            // HACK(jstpierre): By default, the execute scene params are 3D. We should replace executeDrawAll with GfxRenderInstList eventually...
+            template.setUniformBufferOffset(GX_Program.ub_SceneParams, sceneObjHolder.renderParams.sceneParamsOffs3D, ub_SceneParamsBufferSize);
+            nameObj.draw(sceneObjHolder, renderInstManager, viewerInput);
+            renderInstManager.popTemplateRenderInst();
         }
     }
 
@@ -344,6 +331,24 @@ export class SceneNameObjListExecutor {
 
     public drawBufferHasVisible(drawBufferType: DrawBufferType): boolean {
         return this.drawBufferHolder.drawBufferHasVisible(drawBufferType);
+    }
+
+    public getRenderInstListOpa(drawBufferType: DrawBufferType): GfxRenderInstList {
+        return this.drawBufferHolder.getRenderInstListOpa(drawBufferType);
+    }
+
+    public getRenderInstListXlu(drawBufferType: DrawBufferType): GfxRenderInstList {
+        return this.drawBufferHolder.getRenderInstListXlu(drawBufferType);
+    }
+
+    public ensureRenderInstListExecute(drawType: DrawType): GfxRenderInstList {
+        if (this.executeDrawRenderInstList[drawType] === undefined)
+            this.executeDrawRenderInstList[drawType] = new GfxRenderInstList(gfxRenderInstCompareSortKey, GfxRenderInstExecutionOrder.Forwards);
+        return this.executeDrawRenderInstList[drawType];
+    }
+
+    public getRenderInstListExecute(drawType: DrawType): GfxRenderInstList | null {
+        return nullify(this.executeDrawRenderInstList[drawType]);
     }
 }
 

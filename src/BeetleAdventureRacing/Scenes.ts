@@ -1,9 +1,9 @@
 import { CameraController } from "../Camera";
 import { colorNewFromRGBA } from "../Color";
-import { BasicRenderTarget, makeClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass, GfxRenderPassDescriptor } from "../gfx/platform/GfxPlatform";
-import { executeOnPass } from "../gfx/render/GfxRenderer";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxDevice, GfxRenderPassDescriptor } from "../gfx/platform/GfxPlatform";
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from "../gfx/render/GfxRenderGraph";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
 import InputManager from "../InputManager";
 import { Destroyable, SceneContext, SceneDesc, SceneGroup } from "../SceneBase";
 import * as UI from '../ui';
@@ -48,7 +48,6 @@ const bindingLayouts = [{ numUniformBuffers: 3, numSamplers: 2 }];
 
 class BARRenderer implements SceneGfx {
     public renderHelper: GfxRenderHelper;
-    private renderTarget = new BasicRenderTarget();
 
     private uvtrRenderer: UVTRRenderer;
     private uvenRenderer: UVENRenderer | null;
@@ -87,9 +86,9 @@ class BARRenderer implements SceneGfx {
         }
 
         if (uven === null) {
-            this.renderPassDescriptor = makeClearRenderPassDescriptor(true, colorNewFromRGBA(0.1, 0.1, 0.1));
+            this.renderPassDescriptor = makeClearRenderPassDescriptor(colorNewFromRGBA(0.1, 0.1, 0.1));
         } else {
-            this.renderPassDescriptor = makeClearRenderPassDescriptor(true, colorNewFromRGBA(uven.clearR / 0xFF, uven.clearG / 0xFF, uven.clearB / 0xFF));
+            this.renderPassDescriptor = makeClearRenderPassDescriptor(colorNewFromRGBA(uven.clearR / 0xFF, uven.clearG / 0xFF, uven.clearB / 0xFF));
         }
 
         // TODO: should this be lazy?
@@ -223,7 +222,7 @@ class BARRenderer implements SceneGfx {
     }
 
     // Builds a scene graph and uses the hostAccessPass to upload data to the GPU
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         viewerInput.camera.setClipPlanes(0.1);
 
         // Update animations
@@ -253,7 +252,7 @@ class BARRenderer implements SceneGfx {
         renderInstManager.popTemplateRenderInst();
 
         // Upload uniform data to the GPU
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
 
         // For the extra track data display, check to see if we need to toggle the nearest plane on/off
         this.checkCheckpointPlaneToggle(viewerInput);
@@ -270,52 +269,38 @@ class BARRenderer implements SceneGfx {
         }
     }
 
-    public render(device: GfxDevice, viewerInput: ViewerRenderInput): GfxRenderPass | null {
-
-        // Create pass to upload data to the GPU
-        // Sidenote: textures, indices, vertices, etc. have already been uploaded (e.g. in the MaterialRenderer constructor)
-        // (and under the covers noclip actually creates a host access pass to do this)
-        // So the only thing (right now) that this is used for in my code is uploading the uniform buffers.
-        // (which happens in renderHelper.prepareToRender())
-        const hostAccessPass = device.createHostAccessPass();
-
-        // Build scene graph and send buffers to host access pass
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-
-        // Submitting actually performs the upload of the buffers
-        device.submitPass(hostAccessPass);
-
-        // renderInstManager manages the scene graph
+    public render(device: GfxDevice, viewerInput: ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        // Define width and height of buffer that we'll be rendering to
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.renderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.renderPassDescriptor);
 
-        // Now we actually render.
-        // This is the final pass, so set colorResolveTo to the onscreen texture
-        // renderTarget.createRenderPass will set up the pass to use the renderTarget's textures to store color and depth data
-        // (note: an attachment is sort of a reference to a texture)
-        // then once it's rendered to those, the color data will be rendered to colorResolveTo (which basically just amounts to scaling it down to achieve antialiasing)
-        const renderPass = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.renderPassDescriptor, viewerInput.onscreenTexture);
-        executeOnPass(renderInstManager, device, renderPass, 0);
-        device.submitPass(renderPass);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
 
         //TODO: snow
 
-        // Now that we're done rendering, clean up the scene graph
-        renderInstManager.resetRenderInsts();
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        // If we want, we can return our final pass and noclip will submit it and then submit a subsequent pass to render it to viewerInput.onscreenTexture
-        // I prefer to just do it all in here so we'll just return null
-        return null;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
-        if (this.trackDataRenderer !== undefined) {
+        if (this.trackDataRenderer !== undefined)
             this.trackDataRenderer.destroy(device);
-        }
     }
 }
 

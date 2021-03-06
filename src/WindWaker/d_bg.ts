@@ -239,7 +239,7 @@ export class cBgS_GndChk extends cBgS_Chk {
     public Reset(): void {
         super.Reset();
 
-        vec3.set(this.pos, 0, 0, 0);
+        vec3.zero(this.pos);
         this.retY = -Infinity;
         this.flags = 0x03;
     }

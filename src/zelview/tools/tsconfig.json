@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "es2017",
+        "alwaysStrict": true,
+        "downlevelIteration": true,
+        "noImplicitReturns": true,
+        "noImplicitThis": true,
+        "noImplicitAny": true,
+        "strictFunctionTypes": true,
+        "lib": [
+            "es2017"
+        ],
+        "types": [
+            "node"
+        ],
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "outDir": "build/",
+        "sourceMap": true
+    },
+    "include": ["*.ts"]
+}

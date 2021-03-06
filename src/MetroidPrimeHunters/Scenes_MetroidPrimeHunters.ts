@@ -8,15 +8,15 @@ import { parseMPH_Model, parseTEX0Texture } from './mph_binModel';
 
 import { DataFetcher } from '../DataFetcher';
 import ArrayBufferSlice from '../ArrayBufferSlice';
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass } from '../gfx/platform/GfxPlatform';
-import { MPHRenderer, G3DPass } from './render';
+import { GfxDevice } from '../gfx/platform/GfxPlatform';
+import { MPHRenderer } from './render';
 import { assert, assertExists } from '../util';
-import { BasicRenderTarget, opaqueBlackFullClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { opaqueBlackFullClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
 import { FakeTextureHolder } from '../TextureHolder';
-import { GfxRenderInstManager } from '../gfx/render/GfxRenderer';
-import { GfxRenderDynamicUniformBuffer } from '../gfx/render/GfxRenderDynamicUniformBuffer';
 import { SceneContext } from '../SceneBase';
 import { CameraController } from '../Camera';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 
 const pathBase = `MetroidPrimeHunters`;
 
@@ -66,15 +66,13 @@ class ModelCache {
 }
 
 export class MPHSceneRenderer implements Viewer.SceneGfx {
-    public renderTarget = new BasicRenderTarget();
-    public renderInstManager = new GfxRenderInstManager();
-    public uniformBuffer: GfxRenderDynamicUniformBuffer;
+    private renderHelper: GfxRenderHelper;
 
     public textureHolder: FakeTextureHolder;
     public objectRenderers: MPHRenderer[] = [];
 
     constructor(device: GfxDevice, public stageRenderer: MPHRenderer) {
-        this.uniformBuffer = new GfxRenderDynamicUniformBuffer(device);
+        this.renderHelper = new GfxRenderHelper(device);
         this.textureHolder = new FakeTextureHolder(this.stageRenderer.viewerTextures);
     }
 
@@ -82,37 +80,45 @@ export class MPHSceneRenderer implements Viewer.SceneGfx {
         c.setSceneMoveSpeedMult(8/60);
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
-        const template = this.renderInstManager.pushTemplateRenderInst();
-        template.setUniformBuffer(this.uniformBuffer);
-        this.stageRenderer.prepareToRender(this.renderInstManager, viewerInput);
+    private prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
+        this.renderHelper.pushTemplateRenderInst();
+        const renderInstManager = this.renderHelper.renderInstManager;
+        this.stageRenderer.prepareToRender(renderInstManager, viewerInput);
         for (let i = 0; i < this.objectRenderers.length; i++)
-            this.objectRenderers[i].prepareToRender(this.renderInstManager, viewerInput);
-        this.renderInstManager.popTemplateRenderInst();
+            this.objectRenderers[i].prepareToRender(renderInstManager, viewerInput);
+        renderInstManager.popTemplateRenderInst();
 
-        this.uniformBuffer.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
+        const renderInstManager = this.renderHelper.renderInstManager;
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, opaqueBlackFullClearRenderPassDescriptor);
 
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, opaqueBlackFullClearRenderPassDescriptor);
-        this.renderInstManager.setVisibleByFilterKeyExact(G3DPass.MAIN);
-        this.renderInstManager.drawOnPassRenderer(device, mainPassRenderer);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        this.renderInstManager.resetRenderInsts();
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        return mainPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public destroy(device: GfxDevice) {
-        this.renderInstManager.destroy(device);
-        this.renderTarget.destroy(device);
-        this.uniformBuffer.destroy(device);
+        this.renderHelper.destroy(device);
 
         this.stageRenderer.destroy(device);
         for (let i = 0; i < this.objectRenderers.length; i++)

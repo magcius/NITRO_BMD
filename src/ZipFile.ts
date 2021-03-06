@@ -26,7 +26,7 @@ function writeString(buf: ArrayBuffer, offs: number, v: string): void {
         a[i] = v.charCodeAt(i);
 }
 
-function combineArrayBuffers(bufs: ArrayBufferSlice[]): ArrayBuffer {
+function combineArrayBuffers(bufs: ArrayBufferSlice[]): ArrayBufferLike {
     let size = 0;
     for (let i = 0; i < bufs.length; i++)
         size += bufs[i].byteLength;
@@ -92,7 +92,7 @@ function makeCentralDirectoryEnd(numEntries: number, cdOffset: number, cdSize: n
     return new ArrayBufferSlice(buf);
 }
 
-export function makeZipFile(entries: ZipFile): ArrayBuffer {
+export function makeZipFile(entries: ZipFile): ArrayBufferLike {
     // Local file entries.
     const buffers: ArrayBufferSlice[] = [];
     const offsets: number[] = [];

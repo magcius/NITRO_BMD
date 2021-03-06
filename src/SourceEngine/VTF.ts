@@ -265,7 +265,7 @@ export class VTF {
             this.gfxTextures.push(texture);
         }
 
-        const hostAccessPass = device.createHostAccessPass();
+
         const levelDatas: ArrayBufferView[][] = nArray(this.gfxTextures.length, () => []);
 
         // Mipmaps are stored from smallest to largest.
@@ -282,9 +282,7 @@ export class VTF {
         }
 
         for (let i = 0; i < this.gfxTextures.length; i++)
-            hostAccessPass.uploadTextureData(this.gfxTextures[i], 0, levelDatas[i]);
-
-        device.submitPass(hostAccessPass);
+            device.uploadTextureData(this.gfxTextures[i], 0, levelDatas[i]);
 
         const wrapS = !!(this.flags & VTFFlags.CLAMPS) ? GfxWrapMode.CLAMP : GfxWrapMode.REPEAT;
         const wrapT = !!(this.flags & VTFFlags.CLAMPT) ? GfxWrapMode.CLAMP : GfxWrapMode.REPEAT;

@@ -5,27 +5,28 @@ import * as rw from 'librw';
 import * as UI from "../ui";
 import * as Viewer from '../viewer';
 import * as Assets from './assets';
-import { GfxDevice, GfxRenderPass, GfxBuffer, GfxInputLayout, GfxInputState, GfxMegaStateDescriptor, GfxProgram, GfxBufferUsage, GfxVertexAttributeDescriptor, GfxFormat, GfxInputLayoutBufferDescriptor, GfxVertexBufferFrequency, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxCullMode, GfxBlendMode, GfxBlendFactor, GfxBindingLayoutDescriptor, GfxHostAccessPass, GfxTexture, GfxSampler, makeTextureDescriptor2D, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxCompareMode } from '../gfx/platform/GfxPlatform';
+import { GfxDevice, GfxBuffer, GfxInputLayout, GfxInputState, GfxMegaStateDescriptor, GfxProgram, GfxBufferUsage, GfxVertexAttributeDescriptor, GfxFormat, GfxInputLayoutBufferDescriptor, GfxVertexBufferFrequency, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxCullMode, GfxBlendMode, GfxBlendFactor, GfxBindingLayoutDescriptor, GfxTexture, GfxSampler, makeTextureDescriptor2D, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxCompareMode } from '../gfx/platform/GfxPlatform';
 import { MeshFragData, Texture, rwTexture } from '../GrandTheftAuto3/render';
 import { vec3, vec2, mat4, quat } from 'gl-matrix';
 import { colorNewCopy, White, colorNewFromRGBA, Color, colorCopy, TransparentBlack } from '../Color';
 import { filterDegenerateTriangleIndexBuffer, convertToTriangleIndexBuffer, GfxTopology } from '../gfx/helpers/TopologyHelpers';
 import { DeviceProgram } from '../Program';
-import { GfxRenderInstManager, setSortKeyDepth, GfxRendererLayer, makeSortKey } from '../gfx/render/GfxRenderer';
+import { GfxRenderInstManager, setSortKeyDepth, GfxRendererLayer, makeSortKey, executeOnPass } from '../gfx/render/GfxRenderInstManager';
 import { AABB, squaredDistanceFromPointToAABB } from '../Geometry';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { assert, nArray } from '../util';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
-import { FPSCameraController, computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from '../Camera';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
+import { computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from '../Camera';
 import { fillColor, fillMatrix4x4, fillMatrix4x3, fillVec4 } from '../gfx/helpers/UniformBufferHelpers';
 import { makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers';
 import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers';
-import { BasicRenderTarget, depthClearRenderPassDescriptor, makeClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
 import { TextureMapping } from '../TextureHolder';
 import { RWAtomicStruct, RWChunk, parseRWAtomic, RWAtomicFlags, quatFromYPR, DataCacheIDName } from './util';
 import { EventID } from './enums';
 import { reverseDepthForCompareMode } from '../gfx/helpers/ReversedDepthHelpers';
 import { MathConstants } from '../MathHelpers';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const MAX_DRAW_DISTANCE = 1000.0;
 
@@ -84,9 +85,8 @@ export class TextureData {
             return;
 
         this.gfxTexture = device.createTexture(makeTextureDescriptor2D(this.texture.pixelFormat, this.texture.width, this.texture.height, 1));
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(this.gfxTexture, 0, [this.texture.levels[0]]);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(this.gfxTexture, 0, [this.texture.levels[0]]);
 
         this.gfxSampler = device.createSampler({
             magFilter: this.filter,
@@ -995,7 +995,6 @@ export class BFBBRenderer implements Viewer.SceneGfx {
     public playerLightKit?: Assets.LightKit;
 
     public renderHelper: GfxRenderHelper;
-    private renderTarget = new BasicRenderTarget();
 
     private clearColor: Color;
 
@@ -1022,9 +1021,8 @@ export class BFBBRenderer implements Viewer.SceneGfx {
 
     private scratchVec3 = vec3.create();
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         const fogEnabled = this.renderHacks.fog && this.fog;
-        this.clearColor = fogEnabled ? this.fog!.bkgndColor : TransparentBlack;
         const fogColor = fogEnabled ? this.fog!.fogColor : TransparentBlack;
         const fogStart = fogEnabled ? this.fog!.fogStart : 0;
         const fogStop = fogEnabled ? this.fog!.fogStop : 0;
@@ -1070,35 +1068,45 @@ export class BFBBRenderer implements Viewer.SceneGfx {
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+        const fogEnabled = this.renderHacks.fog && this.fog;
+        this.clearColor = fogEnabled ? this.fog!.bkgndColor : TransparentBlack;
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const clearColorPassDescriptor = makeClearRenderPassDescriptor(this.clearColor);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, clearColorPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, clearColorPassDescriptor);
 
-        const clearColorPassDescriptor = makeClearRenderPassDescriptor(true, this.clearColor);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skybox');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyboxDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Skybox Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyboxDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, BFBBPass.SKYDOME);
+            });
+        });
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, BFBBPass.MAIN);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
-        if (this.renderHacks.skydome) {
-            const skydomePassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, clearColorPassDescriptor);
-            renderInstManager.setVisibleByFilterKeyExact(BFBBPass.SKYDOME);
-            renderInstManager.drawOnPassRenderer(device, skydomePassRenderer);
-            device.submitPass(skydomePassRenderer);
-        }
-
-        const clearPassDescriptor = this.renderHacks.skydome ? depthClearRenderPassDescriptor : clearColorPassDescriptor;
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, clearPassDescriptor);
-        renderInstManager.setVisibleByFilterKeyExact(BFBBPass.MAIN);
-        renderInstManager.drawOnPassRenderer(device, mainPassRenderer);
-
-        this.renderHelper.renderInstManager.resetRenderInsts();
-
-        return mainPassRenderer;
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
+        renderInstManager.resetRenderInsts();
     }
 
     public createPanels(): UI.Panel[] {
@@ -1136,7 +1144,6 @@ export class BFBBRenderer implements Viewer.SceneGfx {
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         for (let i = 0; i < this.renderers.length; i++)
             this.renderers[i].destroy(device);
         this.renderers.length = 0;

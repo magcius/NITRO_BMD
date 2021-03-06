@@ -1,7 +1,7 @@
 
 // Implements Nintendo's J3D formats (BMD, BDL, BTK, etc.)
 
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, quat, vec3 } from 'gl-matrix';
 
 import ArrayBufferSlice from '../../../ArrayBufferSlice';
 import { Endianness } from '../../../endian';
@@ -16,6 +16,7 @@ import BitMap from '../../../BitMap';
 import { autoOptimizeMaterial } from '../../../gx/gx_render';
 import { Color, colorNewFromRGBA, colorCopy, colorNewFromRGBA8 } from '../../../Color';
 import { readBTI_Texture, BTI_Texture } from '../JUTTexture';
+import { quatFromEulerRadians } from '../../../MathHelpers';
 
 //#region Helpers
 // ResNTAB / JUTNameTab
@@ -136,7 +137,7 @@ function readVTX1Chunk(buffer: ArrayBufferSlice): VTX1 {
     const dataTables = [
         GX.Attr.POS,
         GX.Attr.NRM,
-        GX.Attr.NBT,
+        GX.Attr.NRM, // NBT
         GX.Attr.CLR0,
         GX.Attr.CLR1,
         GX.Attr.TEX0,
@@ -311,8 +312,20 @@ function readDRW1Chunk(buffer: ArrayBufferSlice): DRW1 {
 //#region JNT1
 export class JointTransformInfo {
     public scale = vec3.fromValues(1.0, 1.0, 1.0);
-    public rotation = vec3.create();
+    public rotation = quat.create();
     public translation = vec3.create();
+
+    public copy(o: Readonly<JointTransformInfo>): void {
+        vec3.copy(this.scale, o.scale);
+        vec3.copy(this.translation, o.translation);
+        quat.copy(this.rotation, o.rotation);
+    }
+
+    public lerp(a: Readonly<JointTransformInfo>, b: Readonly<JointTransformInfo>, t: number): void {
+        vec3.lerp(this.scale, a.scale, b.scale, t);
+        vec3.lerp(this.translation, a.translation, b.translation, t);
+        quat.slerp(this.rotation, a.rotation, b.rotation, t);
+    }
 }
 
 export interface Joint {
@@ -372,9 +385,7 @@ function readJNT1Chunk(buffer: ArrayBufferSlice): JNT1 {
         transform.scale[0] = scaleX;
         transform.scale[1] = scaleY;
         transform.scale[2] = scaleZ;
-        transform.rotation[0] = rotationX;
-        transform.rotation[1] = rotationY;
-        transform.rotation[2] = rotationZ;
+        quatFromEulerRadians(transform.rotation, rotationX, rotationY, rotationZ);
         transform.translation[0] = translationX;
         transform.translation[1] = translationY;
         transform.translation[2] = translationZ;
@@ -1225,6 +1236,22 @@ function assocHierarchy(bmd: BMD): void {
     // Double-check that we have everything done.
     for (let i = 0; i < bmd.shp1.shapes.length; i++)
         assert(bmd.shp1.shapes[i].materialIndex !== -1);
+
+    // Go through and auto-optimize materials which don't use MULTI
+    for (let i = 0; i < bmd.mat3.materialEntries.length; i++) {
+        let multiCount = 0;
+        for (let j = 0; j < bmd.shp1.shapes.length; j++) {
+            const shp1 = bmd.shp1.shapes[j];
+            if (shp1.materialIndex !== i)
+                continue;
+
+            if (bmd.shp1.shapes[j].displayFlags === ShapeDisplayFlags.MULTI)
+                ++multiCount;
+        }
+
+        if (multiCount === 0)
+            bmd.mat3.materialEntries[i].gxMaterial.usePnMtxIdx = false;
+    }
 }
 
 export class BMD {
@@ -1679,6 +1706,92 @@ export class BCK {
         assert(j3d.magic === 'J3D1bck1');
 
         return readANK1Chunk(j3d.nextChunk('ANK1'));
+    }
+}
+//#endregion
+
+//#region J3DAnmTransformFull
+export interface ANF1JointAnimationEntry {
+    scaleX: number[];
+    rotationX: number[];
+    translationX: number[];
+    scaleY: number[];
+    rotationY: number[];
+    translationY: number[];
+    scaleZ: number[];
+    rotationZ: number[];
+    translationZ: number[];
+}
+
+export interface ANF1 extends AnimationBase {
+    jointAnimationEntries: ANF1JointAnimationEntry[];
+}
+
+function readANF1Chunk(buffer: ArrayBufferSlice): ANF1 {
+    const view = buffer.createDataView();
+    const loopMode: LoopMode = view.getUint8(0x08);
+    //const rotationDecimal = view.getInt8(0x09);
+    const duration = view.getUint16(0x0A);
+    const jointAnimationTableCount = view.getUint16(0x0C);
+    const sCount = view.getUint16(0x0E);
+    const rCount = view.getUint16(0x10);
+    const tCount = view.getUint16(0x12);
+    const jointAnimationTableOffs = view.getUint32(0x14);
+    const sTableOffs = view.getUint32(0x18);
+    const rTableOffs = view.getUint32(0x1C);
+    const tTableOffs = view.getUint32(0x20);
+
+    const rotationScale = Math.PI / 0x7FFF;
+
+    const sTable = buffer.createTypedArray(Float32Array, sTableOffs, sCount, Endianness.BIG_ENDIAN);
+    const rTable = buffer.createTypedArray(Int16Array, rTableOffs, rCount, Endianness.BIG_ENDIAN);
+    const tTable = buffer.createTypedArray(Float32Array, tTableOffs, tCount, Endianness.BIG_ENDIAN);
+
+    let animationTableIdx = jointAnimationTableOffs;
+
+    function readAnimationTrack(data: Int16Array | Float32Array, scale: number): number[] {
+        const count = view.getUint16(animationTableIdx + 0x00);
+        const index = view.getUint16(animationTableIdx + 0x02);
+        animationTableIdx += 0x04;
+
+        const frames: number[] = [];
+
+        for (let i = 0; i < count; i++) {
+            frames.push(data[index + i] * scale);
+        }
+
+        return frames;
+    }
+
+    const jointAnimationEntries: ANF1JointAnimationEntry[] = [];
+
+    for (let i = 0; i < jointAnimationTableCount; i++) {
+        const scaleX = readAnimationTrack(sTable, 1);
+        const rotationX = readAnimationTrack(rTable, rotationScale);
+        const translationX = readAnimationTrack(tTable, 1);
+        const scaleY = readAnimationTrack(sTable, 1);
+        const rotationY = readAnimationTrack(rTable, rotationScale);
+        const translationY = readAnimationTrack(tTable, 1);
+        const scaleZ = readAnimationTrack(sTable, 1);
+        const rotationZ = readAnimationTrack(rTable, rotationScale);
+        const translationZ = readAnimationTrack(tTable, 1);
+
+        jointAnimationEntries.push({
+            scaleX, rotationX, translationX,
+            scaleY, rotationY, translationY,
+            scaleZ, rotationZ, translationZ,
+        });
+    }
+
+    return { loopMode, duration, jointAnimationEntries };
+}
+
+export class BCA {
+    public static parse(buffer: ArrayBufferSlice): ANF1 {
+        const j3d = new JSystemFileReaderHelper(buffer);
+        assert(j3d.magic === 'J3D1bca1');
+
+        return readANF1Chunk(j3d.nextChunk('ANF1'));
     }
 }
 //#endregion

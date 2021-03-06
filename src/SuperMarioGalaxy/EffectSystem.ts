@@ -6,10 +6,10 @@ import { createCsvParser, JMapInfoIter } from "./JMapInfo";
 import { SceneObjHolder } from "./Main";
 import { leftPad, assert, assertExists, fallback, fallbackUndefined } from "../util";
 import { GfxDevice } from "../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { vec3, mat4 } from "gl-matrix";
 import { colorNewCopy, White, colorCopy, Color } from "../Color";
-import { computeModelMatrixR } from "../MathHelpers";
+import { computeModelMatrixR, vec3SetAll } from "../MathHelpers";
 import { DrawType, NameObj } from "./NameObj";
 import { LiveActor } from './LiveActor';
 import { TextureMapping } from '../TextureHolder';
@@ -17,6 +17,8 @@ import { XanimePlayer } from './Animation';
 import { getJointMtxByName } from './ActorUtil';
 import { Texture } from '../viewer';
 import { Binder, Triangle, getFloorCodeIndex, FloorCode } from './Collision';
+import { Frustum } from '../Geometry';
+import { LoopMode } from '../Common/JSYSTEM/J3D/J3DLoader';
 
 export class ParticleResourceHolder {
     private effectNameToIndex = new Map<string, number>();
@@ -128,7 +130,7 @@ class ParticleEmitter {
     public init(baseEmitter: JPA.JPABaseEmitter): void {
         assert(this.baseEmitter === null);
         this.baseEmitter = baseEmitter;
-        this.baseEmitter.flags |= JPA.BaseEmitterFlags.DO_NOT_TERMINATE;
+        this.baseEmitter.becomeImmortalEmitter();
         this.didInit = false;
     }
 
@@ -260,7 +262,7 @@ export function setupMultiEmitter(m: MultiEmitter, autoEffectIter: JMapInfoIter)
     m.continueAnimEnd = autoEffectIter.getValueString('ContinueAnimEnd') === 'on';
 }
 
-class MultiEmitterCallBack implements JPA.JPAEmitterCallBack {
+class MultiEmitterCallBack extends JPA.JPAEmitterCallBack {
     public globalColorPrm: Color = colorNewCopy(White);
     public globalColorEnv: Color = colorNewCopy(White);
     public offset = vec3.create();
@@ -305,7 +307,7 @@ class MultiEmitterCallBack implements JPA.JPAEmitterCallBack {
             emitter.setGlobalScale(scratchVec3c);
         } else {
             if (isInit && this.baseScale !== null) {
-                vec3.set(scratchVec3c, this.baseScale, this.baseScale, this.baseScale);
+                vec3SetAll(scratchVec3c, this.baseScale);
                 emitter.setGlobalScale(scratchVec3c);
             }
         }
@@ -413,7 +415,7 @@ export class MultiEmitter {
     public startFrame: number;
     public endFrame: number;
     public continueAnimEnd: boolean;
-    public bckName: string | null = null;
+    public currentBckName: string | null = null;
     public emitterCallBack = new MultiEmitterCallBack();
 
     constructor(sceneObjHolder: SceneObjHolder, effectName: string) {
@@ -518,8 +520,8 @@ export class MultiEmitter {
             if (!emitter.isValid() || emitter.isOneTime())
                 continue;
             const baseEmitter = emitter.particleEmitter!.baseEmitter!;
-            baseEmitter.flags &= ~JPA.BaseEmitterFlags.STOP_CALC_EMITTER;
-            baseEmitter.flags &= ~JPA.BaseEmitterFlags.STOP_DRAW_PARTICLE;
+            baseEmitter.playCalcEmitter();
+            baseEmitter.playDrawParticle();
         }
     }
 
@@ -529,8 +531,8 @@ export class MultiEmitter {
             if (!emitter.isValid() || emitter.isOneTime())
                 continue;
             const baseEmitter = emitter.particleEmitter!.baseEmitter!;
-            baseEmitter.flags |= JPA.BaseEmitterFlags.STOP_CALC_EMITTER;
-            baseEmitter.flags |= JPA.BaseEmitterFlags.STOP_DRAW_PARTICLE;
+            baseEmitter.stopCalcEmitter();
+            baseEmitter.stopDrawParticle();
         }
     }
 
@@ -559,12 +561,12 @@ export class MultiEmitter {
             for (let i = 0; i < this.singleEmitters.length; i++) {
                 const emitter = this.singleEmitters[i];
                 if (emitter.isValid())
-                    emitter.particleEmitter!.baseEmitter!.flags &= ~JPA.BaseEmitterFlags.STOP_CALC_EMITTER;
+                    emitter.particleEmitter!.baseEmitter!.playCalcEmitter();
             }
         } else {
             const emitter = this.singleEmitters[emitterIndex];
             if (emitter.isValid())
-                emitter.particleEmitter!.baseEmitter!.flags &= ~JPA.BaseEmitterFlags.STOP_CALC_EMITTER;
+                emitter.particleEmitter!.baseEmitter!.playCalcEmitter();
         }
     }
 
@@ -662,23 +664,30 @@ function isCreate(multiEmitter: MultiEmitter, currentBckName: string | null, xan
     return false;
 }
 
+function isBckLoop(xanimePlayer: XanimePlayer, bckName: string | null): boolean {
+    if (bckName === null)
+        return false;
+
+    const bckRes = assertExists(xanimePlayer.resTable.get(bckName));
+    return bckRes.loopMode === LoopMode.REPEAT || bckRes.loopMode === LoopMode.MIRRORED_REPEAT;
+}
+
 function isDelete(multiEmitter: MultiEmitter, currentBckName: string | null, xanimePlayer: XanimePlayer, deltaTimeFrames: number): boolean {
-    if (!isRegisteredBck(multiEmitter, currentBckName)) {
-        // TODO(jstpierre): isBckLoop.
+    if (isRegisteredBck(multiEmitter, currentBckName)) {
+        if (multiEmitter.endFrame >= 0 || !isBckLoop(xanimePlayer, currentBckName))
+            return checkPass(xanimePlayer, multiEmitter.endFrame, deltaTimeFrames);
+    } else {
+        if (multiEmitter.continueAnimEnd ) {
+            const actualCurrentBckName = xanimePlayer.getCurrentBckName();
+            if (actualCurrentBckName === null)
+                return false;
 
-        if (!multiEmitter.continueAnimEnd)
-            return multiEmitter.bckName !== currentBckName;
-
-        const actualCurrentBckName = xanimePlayer.getCurrentBckName();
-        if (actualCurrentBckName === null)
-            return false;
-
-        if (!isRegisteredBck(multiEmitter, actualCurrentBckName))
-            return xanimePlayer.isTerminate(actualCurrentBckName);
+            if (!isRegisteredBck(multiEmitter, actualCurrentBckName.toLowerCase()))
+                return xanimePlayer.isTerminate(actualCurrentBckName);
+        } else {
+            return multiEmitter.currentBckName !== currentBckName;
+        }
     }
-
-    if (multiEmitter.endFrame >= 0)
-        return checkPass(xanimePlayer, multiEmitter.endFrame, deltaTimeFrames);
 
     return false;
 }
@@ -696,6 +705,10 @@ function getEffectAttributeName(floorCode: FloorCode): string {
         return 'Mud';
     else
         return 'Default';
+}
+
+function makeAttributeEffectBaseName(name: string): string {
+    return name.slice(0, name.indexOf('Attr'));
 }
 
 export class EffectKeeper {
@@ -796,6 +809,11 @@ export class EffectKeeper {
             multiEmitter.forceDeleteEmitter(sceneObjHolder.effectSystem!);
     }
 
+    public forceDeleteEmitterAll(sceneObjHolder: SceneObjHolder): void {
+        for (let i = 0; i < this.multiEmitters.length; i++)
+            this.multiEmitters[i].forceDeleteEmitter(sceneObjHolder.effectSystem!);
+    }
+
     public deleteEmitterAll(): void {
         for (let i = 0; i < this.multiEmitters.length; i++)
             this.multiEmitters[i].deleteEmitter();
@@ -824,14 +842,25 @@ export class EffectKeeper {
         if (multiEmitter.animNames === null)
             return;
 
-        if (isCreate(multiEmitter, this.currentBckName, xanimePlayer, EmitterLoopMode.OneTime, this.changeBckReset, deltaTimeFrames))
-            multiEmitter.createOneTimeEmitter(effectSystem);
-        if (isCreate(multiEmitter, this.currentBckName, xanimePlayer, EmitterLoopMode.Forever, this.changeBckReset, deltaTimeFrames))
-            multiEmitter.createForeverEmitter(effectSystem);
+        const isCreateOneTime = isCreate(multiEmitter, this.currentBckName, xanimePlayer, EmitterLoopMode.OneTime, this.changeBckReset, deltaTimeFrames);
+        const isCreateForever = isCreate(multiEmitter, this.currentBckName, xanimePlayer, EmitterLoopMode.Forever, this.changeBckReset, deltaTimeFrames);
+        if (isCreateOneTime || isCreateForever) {
+            let createEmitter = multiEmitter;
+            if (multiEmitter.name.includes('Attr'))
+                createEmitter = this.getEmitter(makeAttributeEffectBaseName(multiEmitter.name))!;
+
+            if (createEmitter !== null) {
+                if (isCreateOneTime)
+                    createEmitter.createOneTimeEmitter(effectSystem);
+                if (isCreateForever)
+                    createEmitter.createForeverEmitter(effectSystem);
+            }
+        }
+
         if (isDelete(multiEmitter, this.currentBckName, xanimePlayer, deltaTimeFrames))
             multiEmitter.deleteEmitter();
 
-        multiEmitter.bckName = this.currentBckName;
+        multiEmitter.currentBckName = this.currentBckName;
     }
 
     private updateSyncBckEffect(effectSystem: EffectSystem, deltaTimeFrames: number): void {
@@ -862,7 +891,7 @@ export class EffectKeeper {
                 const multiEmitter = this.multiEmitters[i];
                 if (multiEmitter.isValid() && !multiEmitter.isExistOneTimeEmitter()) {
                     multiEmitter.deleteForeverEmitter();
-                    const emitterBaseName = multiEmitter.name.slice(0, multiEmitter.name.indexOf('Attr'));
+                    const emitterBaseName = makeAttributeEffectBaseName(multiEmitter.name);
                     this.createEmitter(sceneObjHolder, emitterBaseName);
                     break;
                 }
@@ -944,8 +973,7 @@ export class ParticleEmitterHolder {
             if (baseEmitter === null)
                 continue;
 
-            if (!!(baseEmitter.flags & JPA.BaseEmitterFlags.TERMINATED) &&
-                baseEmitter.aliveParticlesBase.length === 0 && baseEmitter.aliveParticlesChild.length === 0) {
+            if (baseEmitter.isEnableDeleteEmitter()) {
                 this.effectSystem.forceDeleteEmitter(emitter);
             } else {
                 if (!emitter.didInit) {
@@ -963,6 +991,7 @@ export class EffectSystem extends NameObj {
     public particleEmitterHolder: ParticleEmitterHolder;
     public emitterManager: JPA.JPAEmitterManager;
     public drawInfo = new JPA.JPADrawInfo();
+    private emitterCount = 0;
 
     constructor(sceneObjHolder: SceneObjHolder) {
         super(sceneObjHolder, 'EffectSystem');
@@ -996,9 +1025,10 @@ export class EffectSystem extends NameObj {
         this.emitterManager.calc(deltaTime);
     }
 
-    public setDrawInfo(posCamMtx: mat4, prjMtx: mat4, texPrjMtx: mat4 | null): void {
+    public setDrawInfo(posCamMtx: mat4, prjMtx: mat4, texPrjMtx: mat4 | null, frustum: Frustum): void {
         this.drawInfo.posCamMtx = posCamMtx;
         this.drawInfo.texPrjMtx = texPrjMtx;
+        this.drawInfo.frustum = frustum;
     }
 
     public drawEmitters(device: GfxDevice, renderInstManager: GfxRenderInstManager, groupID: number): void {
@@ -1065,8 +1095,7 @@ export class EffectSystem extends NameObj {
 
 function deleteParticleEmitter(emitter: ParticleEmitter): void {
     const baseEmitter = assertExists(emitter.baseEmitter);
-    baseEmitter.flags |= JPA.BaseEmitterFlags.STOP_EMIT_PARTICLES;
-    baseEmitter.maxFrame = 1;
+    baseEmitter.becomeInvalidEmitter();
 }
 
 export function setEffectHostMtx(actor: LiveActor, effectName: string, hostMtx: mat4): void {
@@ -1103,7 +1132,7 @@ export function emitEffectWithScale(sceneObjHolder: SceneObjHolder, actor: LiveA
     if (actor.effectKeeper === null)
         return;
     const emitter = actor.effectKeeper.createEmitter(sceneObjHolder, name);
-    vec3.set(scratchVec3a, scale, scale, scale);
+    vec3SetAll(scratchVec3a, scale);
     emitter!.setGlobalScale(scratchVec3a);
 }
 
@@ -1139,6 +1168,12 @@ export function forceDeleteEffect(sceneObjHolder: SceneObjHolder, actor: LiveAct
     if (actor.effectKeeper === null)
         return;
     actor.effectKeeper.forceDeleteEmitter(sceneObjHolder, name);
+}
+
+export function forceDeleteEffectAll(sceneObjHolder: SceneObjHolder, actor: LiveActor): void {
+    if (actor.effectKeeper === null)
+        return;
+    actor.effectKeeper.forceDeleteEmitterAll(sceneObjHolder);
 }
 
 export function deleteEffectAll(actor: LiveActor): void {

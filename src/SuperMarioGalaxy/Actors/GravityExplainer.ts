@@ -14,7 +14,7 @@ import { connectToScene, getRandomFloat, calcGravityVector } from '../ActorUtil'
 import { DrawType, MovementType } from '../NameObj';
 import { ViewerRenderInput } from '../../viewer';
 import { invlerp, Vec3Zero, transformVec3Mat4w0, transformVec3Mat4w1 } from '../../MathHelpers';
-import { GfxRenderInstManager } from '../../gfx/render/GfxRenderer';
+import { GfxRenderInstManager } from '../../gfx/render/GfxRenderInstManager';
 import { GfxDevice } from '../../gfx/platform/GfxPlatform';
 import { Camera } from '../../Camera';
 

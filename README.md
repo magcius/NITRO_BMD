@@ -18,7 +18,6 @@ If you would like contribute, there is a Getting Started guide in the [Official 
 	- G: Open save state menu
 	- Numpad 3: Export save states
 	- Numpad 7: Take screenshot
-	- Numpad 9: Export textures
 	- Number key: Load save state
 	- Period: Freeze/unfreeze time
 - WASD mode

@@ -1,21 +1,22 @@
 import { mat4, vec3, quat } from 'gl-matrix';
 import { DataFetcher } from '../DataFetcher';
 import { GfxDevice } from '../gfx/platform/GfxPlatform';
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import * as GX_Material from '../gx/gx_material';
 import * as GX from '../gx/gx_enum';
 import { getDebugOverlayCanvas2D, drawWorldSpacePoint, drawWorldSpaceLine } from "../DebugJunk";
+import { colorNewFromRGBA } from '../Color';
+import { GXMaterialBuilder } from '../gx/GXMaterialBuilder';
+import { computeViewMatrix } from '../Camera';
+import { getRandomInt } from '../SuperMarioGalaxy/ActorUtil';
 
 import { StandardMaterial } from './materials';
 import { ModelInstance, ModelRenderContext } from './models';
 import { dataSubarray, angle16ToRads, readVec3, mat4FromSRT, readUint32, readUint16 } from './util';
 import { Anim, interpolateKeyframes, Keyframe, applyKeyframeToModel } from './animation';
 import { World } from './world';
-import { getRandomInt } from '../SuperMarioGalaxy/ActorUtil';
-import { SceneRenderContext } from './render';
-import { colorNewFromRGBA } from '../Color';
-import { GXMaterialBuilder } from '../gx/GXMaterialBuilder';
-import { computeViewMatrix } from '../Camera';
+import { SceneRenderContext, SFARenderLists } from './render';
+import { Viewer, ViewerRenderInput } from '../viewer';
 
 // An SFAClass holds common data and logic for one or more ObjectTypes.
 // An ObjectType serves as a template to spawn ObjectInstances.
@@ -793,6 +794,7 @@ export class ObjectType {
     public objClass: number;
     public modelNums: number[] = [];
     public isDevObject: boolean = false;
+    public adjustCullRadius: number = 0;
     public ambienceNum: number = 0;
 
     constructor(public typeNum: number, private data: DataView, private isEarlyObject: boolean) {
@@ -823,6 +825,8 @@ export class ObjectType {
             // XXX: Object type "curve" is not marked as a dev object, but it should be treated as one.
             this.isDevObject = true;
         }
+
+        this.adjustCullRadius = data.getUint8(0x73);
 
         this.ambienceNum = data.getUint8(0x8e);
     }
@@ -855,6 +859,7 @@ export class ObjectInstance {
     public scale: number = 1.0;
     private srtMatrix: mat4 = mat4.create();
     private srtDirty: boolean = true;
+    private cullRadius: number = 10;
 
     private modelAnimNum: number | null = null;
     private anim: Anim | null = null;
@@ -983,6 +988,12 @@ export class ObjectInstance {
             this.modanim = this.world.resColl.modanimColl.getModanim(modelNum);
             this.modelInst = modelInst;
 
+            this.cullRadius = 10;
+            if (this.modelInst.model.cullRadius > this.cullRadius)
+                this.cullRadius = this.modelInst.model.cullRadius;
+            if (this.objType.adjustCullRadius !== 0)
+                this.cullRadius *= 10 * this.objType.adjustCullRadius / 255;
+
             if (this.modanim.byteLength > 0 && amap.byteLength > 0)
                 this.setModelAnimNum(0);
         } catch (e) {
@@ -1032,11 +1043,16 @@ export class ObjectInstance {
         }
     }
 
-    public render(device: GfxDevice, renderInstManager: GfxRenderInstManager, objectCtx: ObjectRenderContext) {
-        // TODO: don't update in render function?
+    private isFrustumCulled(viewerInput: ViewerRenderInput): boolean {
+        return !viewerInput.camera.frustum.containsSphere(this.position, this.cullRadius * this.scale);
+    }
+
+    public render(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists | null, objectCtx: ObjectRenderContext) {
+        // Update animations
+        // TODO: Call update elsewhere?
         this.update();
 
-        if (this.modelInst !== null && this.modelInst !== undefined) {
+        if (this.modelInst !== null && this.modelInst !== undefined && !this.isFrustumCulled(objectCtx.sceneCtx.viewerInput)) {
             const mtx = this.getWorldSRT();
             const viewMtx = scratchMtx0;
             computeViewMatrix(viewMtx, objectCtx.sceneCtx.viewerInput.camera);
@@ -1046,7 +1062,7 @@ export class ObjectInstance {
             this.modelInst.prepareToRender(device, renderInstManager, {
                 ...objectCtx,
                 outdoorAmbientColor: scratchColor0,
-            }, mtx, -viewPos[2]);
+            }, renderLists, mtx, -viewPos[2]);
 
             // Draw bones
             const drawBones = false;

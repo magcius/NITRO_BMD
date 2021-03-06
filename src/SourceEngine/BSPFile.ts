@@ -3,7 +3,7 @@
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { readString, assertExists, assert, nArray } from "../util";
-import { vec4, vec3, vec2 } from "gl-matrix";
+import { vec4, vec3, vec2, ReadonlyVec3 } from "gl-matrix";
 import { getTriangleIndexCountForTopologyIndexCount, GfxTopology, convertToTrianglesRange } from "../gfx/helpers/TopologyHelpers";
 import { parseZipFile, ZipFile } from "../ZipFile";
 import { parseEntitiesLump, BSPEntity } from "./VMT";
@@ -11,9 +11,10 @@ import { Plane, AABB } from "../Geometry";
 import { deserializeGameLump_dprp, DetailObjects, deserializeGameLump_sprp, StaticObjects } from "./StaticDetailObject";
 import BitMap from "../BitMap";
 import { decompress, decodeLZMAProperties } from '../Common/Compression/LZMA';
-import { Color, colorNewFromRGBA, colorCopy, TransparentBlack, colorScaleAndAdd, colorScale } from "../Color";
+import { Color, colorNewFromRGBA, colorCopy, TransparentBlack, colorScaleAndAdd, colorScale, colorNewCopy } from "../Color";
 import { unpackColorRGBExp32 } from "./Materials";
 import { lerp } from "../MathHelpers";
+import { arrayEqual } from "../gfx/platform/GfxPlatformUtil";
 
 const enum LumpType {
     ENTITIES                  = 0,
@@ -73,7 +74,7 @@ export interface Overlay {
 }
 
 export interface Surface {
-    texinfo: number;
+    texName: string;
     onNode: boolean;
     startIndex: number;
     indexCount: number;
@@ -107,7 +108,7 @@ const enum TexinfoFlags {
     BUMPLIGHT = 0x0800,
 }
 
-export interface Texinfo {
+interface Texinfo {
     textureMapping: TexinfoMapping;
     lightmapMapping: TexinfoMapping;
     flags: TexinfoFlags;
@@ -129,7 +130,6 @@ export interface BSPNode {
     child1: number;
     bbox: AABB;
     area: number;
-    surfaces: number[];
 }
 
 export type AmbientCube = Color[];
@@ -147,7 +147,11 @@ export interface BSPLeaf {
     surfaces: number[];
 }
 
-export function computeAmbientCubeFromLeaf(dst: AmbientCube, leaf: BSPLeaf, pos: vec3): void {
+export function newAmbientCube(): AmbientCube {
+    return nArray(6, () => colorNewCopy(TransparentBlack));
+}
+
+export function computeAmbientCubeFromLeaf(dst: AmbientCube, leaf: BSPLeaf, pos: ReadonlyVec3): void {
     // XXX(jstpierre): This breaks on d2_coast_01, where there's a prop located outside
     // the leaf it's in due to floating point rounding error.
     // assert(leaf.bbox.containsPoint(pos));
@@ -204,7 +208,10 @@ export interface WorldLight {
     normal: vec3;
     type: WorldLightType;
     radius: number;
-    attn: vec3;
+    distAttenuation: vec3;
+    exponent: number;
+    stopdot: number;
+    stopdot2: number;
 }
 
 interface BSPDispInfo {
@@ -413,7 +420,7 @@ export class LightmapPackerPage {
         const w = allocation.width, h = allocation.height;
 
         // March downwards until we find a span of skyline that will fit.
-        let bestY = -1, minX = this.maxWidth;
+        let bestY = -1, minX = this.maxWidth - w + 1;
         for (let y = 0; y < this.maxHeight - h;) {
             const searchY = this.searchSkyline(y, h);
             if (this.skyline[searchY] < minX) {
@@ -497,12 +504,16 @@ export interface Cubemap {
     filename: string;
 }
 
+function ensureInList<T>(L: T[], v: T): void {
+    if (!L.includes(v))
+        L.push(v);
+}
+
 const scratchVec3 = vec3.create();
 export class BSPFile {
     public version: number;
 
     public entities: BSPEntity[] = [];
-    public texinfo: Texinfo[] = [];
     public surfaces: Surface[] = [];
     public models: Model[] = [];
     public pakfile: ZipFile | null = null;
@@ -597,6 +608,8 @@ export class BSPFile {
             return vec4.fromValues(x, y, z, w);
         }
 
+        const texinfoa: Texinfo[] = [];
+
         // Parse out texinfo / texdata.
         const texstrTable = getLumpData(LumpType.TEXDATA_STRING_TABLE).createTypedArray(Uint32Array);
         const texstrData = getLumpData(LumpType.TEXDATA_STRING_DATA);
@@ -623,15 +636,13 @@ export class BSPFile {
             const height = texdata.getUint32(texdataOffs + 0x14, true);
             const view_width = texdata.getUint32(texdataOffs + 0x18, true);
             const view_height = texdata.getUint32(texdataOffs + 0x1C, true);
-            const texName = readString(texstrData, texstrTable[nameTableStringID]);
-
-            this.texinfo.push({ textureMapping, lightmapMapping, flags, texName, width, height });
+            const texName = readString(texstrData, texstrTable[nameTableStringID]).toLowerCase();
+            texinfoa.push({ textureMapping, lightmapMapping, flags, width, height, texName });
         }
 
         // Parse materials.
         const pakfileData = getLumpData(LumpType.PAKFILE);
-        if (pakfileData !== null)
-            this.pakfile = parseZipFile(pakfileData);
+        this.pakfile = parseZipFile(pakfileData);
 
         // Build our mesh.
 
@@ -707,7 +718,7 @@ export class BSPFile {
             const idx = i * 0x38;
 
             const texinfo = faces.getUint16(idx + 0x0A, true);
-            const tex = this.texinfo[texinfo];
+            const tex = texinfoa[texinfo];
 
             const numedges = faces.getUint16(idx + 0x08, true);
             const dispinfo = faces.getInt16(idx + 0x0C, true);
@@ -771,9 +782,137 @@ export class BSPFile {
             basicSurfaces.push({ index: i, texinfo, lightmapData, vertnormalBase });
         }
 
+        const models = getLumpData(LumpType.MODELS).createDataView();
+        const surfaceToModelIdx: number[] = [];
+        for (let idx = 0x00; idx < models.byteLength; idx += 0x30) {
+            const minX = models.getFloat32(idx + 0x00, true);
+            const minY = models.getFloat32(idx + 0x04, true);
+            const minZ = models.getFloat32(idx + 0x08, true);
+            const maxX = models.getFloat32(idx + 0x0C, true);
+            const maxY = models.getFloat32(idx + 0x10, true);
+            const maxZ = models.getFloat32(idx + 0x14, true);
+            const bbox = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
+
+            const originX = models.getFloat32(idx + 0x18, true);
+            const originY = models.getFloat32(idx + 0x1C, true);
+            const originZ = models.getFloat32(idx + 0x20, true);
+
+            const headnode = models.getUint32(idx + 0x24, true);
+            const firstface = models.getUint32(idx + 0x28, true);
+            const numfaces = models.getUint32(idx + 0x2C, true);
+
+            const modelIndex = this.models.length;
+            for (let i = firstface; i < firstface + numfaces; i++)
+                surfaceToModelIdx[i] = modelIndex;
+            this.models.push({ bbox, headnode, surfaces: [] });
+        }
+
+
+        const [leafsLump, leafsVersion] = getLumpDataEx(LumpType.LEAFS);
+        const leafs = leafsLump.createDataView();
+
+        let leafambientindex = getLumpData(LumpType.LEAF_AMBIENT_INDEX_HDR).createDataView();
+        if (leafambientindex.byteLength === 0)
+            leafambientindex = getLumpData(LumpType.LEAF_AMBIENT_INDEX).createDataView();
+
+        let leafambientlighting = getLumpData(LumpType.LEAF_AMBIENT_LIGHTING_HDR, 1).createDataView();
+        if (leafambientlighting.byteLength === 0)
+            leafambientlighting = getLumpData(LumpType.LEAF_AMBIENT_LIGHTING, 1).createDataView();
+
+        const leaffacelist = getLumpData(LumpType.LEAFFACES).createTypedArray(Uint16Array);
+        const surfaceToLeafIdx: number[][] = nArray(basicSurfaces.length, () => []);
+        for (let idx = 0x00; idx < leafs.byteLength;) {
+            const contents = leafs.getUint32(idx + 0x00, true);
+            const cluster = leafs.getUint16(idx + 0x04, true);
+            const areaAndFlags = leafs.getUint16(idx + 0x06, true);
+            const area = areaAndFlags & 0x01FF;
+            const flags = (areaAndFlags >>> 9) & 0x007F;
+            const bboxMinX = leafs.getInt16(idx + 0x08, true);
+            const bboxMinY = leafs.getInt16(idx + 0x0A, true);
+            const bboxMinZ = leafs.getInt16(idx + 0x0C, true);
+            const bboxMaxX = leafs.getInt16(idx + 0x0E, true);
+            const bboxMaxY = leafs.getInt16(idx + 0x10, true);
+            const bboxMaxZ = leafs.getInt16(idx + 0x12, true);
+            const bbox = new AABB(bboxMinX, bboxMinY, bboxMinZ, bboxMaxX, bboxMaxY, bboxMaxZ);
+            const firstleafface = leafs.getUint16(idx + 0x14, true);
+            const numleaffaces = leafs.getUint16(idx + 0x16, true);
+            const firstleafbrush = leafs.getUint16(idx + 0x18, true);
+            const numleafbrushes = leafs.getUint16(idx + 0x1A, true);
+            const leafwaterdata = leafs.getInt16(idx + 0x1C, true);
+            const leafindex = this.leaflist.length;
+
+            idx += 0x1E;
+
+            const ambientLightSamples: BSPLeafAmbientSample[] = [];
+            if (leafsVersion === 0) {
+                // We only have one ambient cube sample, in the middle of the leaf.
+                const ambientCube: Color[] = [];
+
+                for (let j = 0; j < 6; j++) {
+                    const exp = leafs.getUint8(idx + 0x03);
+                    // Game seems to accidentally include an extra factor of 255.0.
+                    const r = unpackColorRGBExp32(leafs.getUint8(idx + 0x00), exp) * 255.0;
+                    const g = unpackColorRGBExp32(leafs.getUint8(idx + 0x01), exp) * 255.0;
+                    const b = unpackColorRGBExp32(leafs.getUint8(idx + 0x02), exp) * 255.0;
+                    ambientCube.push(colorNewFromRGBA(r, g, b));
+                    idx += 0x04;
+                }
+
+                const x = lerp(bboxMinX, bboxMaxX, 0.5);
+                const y = lerp(bboxMinY, bboxMaxY, 0.5);
+                const z = lerp(bboxMinZ, bboxMaxZ, 0.5);
+                const pos = vec3.fromValues(x, y, z);
+
+                ambientLightSamples.push({ ambientCube, pos });
+
+                // Padding.
+                idx += 0x02;
+            } else {
+                const ambientSampleCount = leafambientindex.getUint16(leafindex * 0x04 + 0x00, true);
+                const firstAmbientSample = leafambientindex.getUint16(leafindex * 0x04 + 0x02, true);
+                for (let i = 0; i < ambientSampleCount; i++) {
+                    const ambientSampleOffs = (firstAmbientSample + i) * 0x1C;
+
+                    // Ambient cube samples
+                    const ambientCube: Color[] = [];
+                    let ambientSampleColorIdx = ambientSampleOffs;
+                    for (let j = 0; j < 6; j++) {
+                        const exp = leafambientlighting.getUint8(ambientSampleColorIdx + 0x03);
+                        const r = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x00), exp) * 255.0;
+                        const g = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x01), exp) * 255.0;
+                        const b = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x02), exp) * 255.0;
+                        ambientCube.push(colorNewFromRGBA(r, g, b));
+                    }
+
+                    // Fraction of bbox.
+                    const xf = leafambientlighting.getUint8(ambientSampleOffs + 0x18) / 0xFF;
+                    const yf = leafambientlighting.getUint8(ambientSampleOffs + 0x19) / 0xFF;
+                    const zf = leafambientlighting.getUint8(ambientSampleOffs + 0x1A) / 0xFF;
+
+                    const x = lerp(bboxMinX, bboxMaxX, xf);
+                    const y = lerp(bboxMinY, bboxMaxY, yf);
+                    const z = lerp(bboxMinZ, bboxMaxZ, zf);
+                    const pos = vec3.fromValues(x, y, z);
+
+                    ambientLightSamples.push({ ambientCube, pos });
+                }
+
+                // Padding.
+                idx += 0x02;
+            }
+
+            this.leaflist.push({ bbox, cluster, area, ambientLightSamples, surfaces: [] });
+
+            const leafidx = this.leaflist.length - 1;
+            for (let i = firstleafface; i < firstleafface + numleaffaces; i++)
+                surfaceToLeafIdx[leaffacelist[i]].push(leafidx);
+        }
+
+        for (let i = 0; i < surfaceToLeafIdx.length; i++)
+            surfaceToLeafIdx[i].sort((a, b) => a - b);
+
         // Sort surfaces by texinfo, and re-pack into fewer surfaces.
-        const surfaceRemapTable = nArray(basicSurfaces.length, () => -1);
-        basicSurfaces.sort((a, b) => a.texinfo - b.texinfo);
+        basicSurfaces.sort((a, b) => texinfoa[a.texinfo].texName.localeCompare(texinfoa[b.texinfo].texName));
 
         // 3 pos, 4 normal, 4 tangent, 4 uv
         const vertexSize = (3+4+4+4);
@@ -799,22 +938,35 @@ export class BSPFile {
         for (let i = 0; i < basicSurfaces.length; i++) {
             const basicSurface = basicSurfaces[i];
 
-            const tex = this.texinfo[basicSurface.texinfo];
+            const tex = texinfoa[basicSurface.texinfo];
+            const texName = tex.texName;
 
-            // Translucent surfaces require a sort, so they can't be merged.
             const isTranslucent = !!(tex.flags & TexinfoFlags.TRANS);
             const center = isTranslucent ? vec3.create() : null;
 
             const lightmapPageIndex = basicSurface.lightmapData.pageIndex;
-            // Determine if we can merge with the previous surface for output.
 
-            // TODO(jstpierre): We need to check that we're inside two different entities.
-            // The hope is that texinfo's will differ in this case, but this is not 100% guaranteed.
+            // Determine if we can merge with the previous surface for output.
             let mergeSurface: Surface | null = null;
-            if (!isTranslucent && this.surfaces.length > 0) {
-                const potentialMergeSurface = this.surfaces[this.surfaces.length - 1];
-                if (potentialMergeSurface.texinfo === basicSurface.texinfo && potentialMergeSurface.lightmapPageIndex === lightmapPageIndex)
-                    mergeSurface = potentialMergeSurface;
+            if (i > 0) {
+                const prevBasicSurface = basicSurfaces[i - 1];
+                let canMerge = true;
+
+                // Translucent surfaces require a sort, so they can't be merged.
+                if (isTranslucent)
+                    canMerge = false;
+                else if (texinfoa[prevBasicSurface.texinfo].texName !== texName)
+                    canMerge = false;
+                else if (prevBasicSurface.lightmapData.pageIndex !== lightmapPageIndex)
+                    canMerge = false;
+                else if (surfaceToModelIdx[prevBasicSurface.index] !== surfaceToModelIdx[basicSurface.index])
+                    canMerge = false;
+                // TODO(jstpierre): Some way of checking the effective PVS set that doesn't kill our performance...
+                // else if (!arrayEqual(surfaceToLeafIdx[prevBasicSurface.index], surfaceToLeafIdx[basicSurface.index], (a, b) => a === b))
+                //    canMerge = false;
+
+                if (canMerge)
+                    mergeSurface = this.surfaces[this.surfaces.length - 1];
             }
 
             const idx = basicSurface.index * 0x38;
@@ -849,7 +1001,6 @@ export class BSPFile {
             // Detect if we need to flip tangents.
             const tangentSSign = vec3.dot(scratchPosition, scratchNormal) > 0.0 ? -1.0 : 1.0;
 
-            const texinfo = basicSurface.texinfo;
             const lightmapData = basicSurface.lightmapData;
 
             const page = this.lightmapPackerManager.pages[lightmapData.pageIndex];
@@ -944,7 +1095,7 @@ export class BSPFile {
                 assert(m === ((disp.sideLength - 1) ** 2) * 6);
 
                 // TODO(jstpierre): Merge disps
-                const surface: Surface = { texinfo, onNode, startIndex: dstOffsIndex, indexCount: m, center, lightmapData: [], lightmapPageIndex, isDisplacement: true, bbox: builder.aabb, overlays: [] };
+                const surface: Surface = { texName, onNode, startIndex: dstOffsIndex, indexCount: m, center, lightmapData: [], lightmapPageIndex, isDisplacement: true, bbox: builder.aabb, overlays: [] };
                 this.surfaces.push(surface);
 
                 surface.lightmapData.push(lightmapData);
@@ -991,7 +1142,7 @@ export class BSPFile {
                     vertexData[dstOffs++] = scratchVec2[1];
 
                     // Lightmap UV
-                    if (tex.flags & TexinfoFlags.NOLIGHT) {
+                    if (!!(tex.flags & TexinfoFlags.NOLIGHT)) {
                         vec2.set(scratchVec2, 0.5, 0.5);
                     } else {
                         calcTexCoord(scratchVec2, scratchPosition, tex.lightmapMapping);
@@ -1036,7 +1187,7 @@ export class BSPFile {
                 let surface = mergeSurface;
 
                 if (surface === null) {
-                    surface = { texinfo, onNode, startIndex: dstOffsIndex, indexCount: 0, center, lightmapData: [], lightmapPageIndex, isDisplacement: false, bbox: null, overlays: [] };
+                    surface = { texName, onNode, startIndex: dstOffsIndex, indexCount: 0, center, lightmapData: [], lightmapPageIndex, isDisplacement: false, bbox: null, overlays: [] };
                     this.surfaces.push(surface);
                 }
 
@@ -1047,7 +1198,15 @@ export class BSPFile {
                 dstIndexBase += numedges;
             }
 
-            surfaceRemapTable[basicSurface.index] = this.surfaces.length - 1;
+            // Mark surfaces as part of the right model and leaf.
+            const surfaceIndex = this.surfaces.length - 1;
+
+            const model = this.models[surfaceToModelIdx[basicSurface.index]];
+            ensureInList(model.surfaces, surfaceIndex);
+
+            const surfleaflist = surfaceToLeafIdx[basicSurface.index];
+            for (let j = 0; j < surfleaflist.length; j++)
+                ensureInList(this.leaflist[surfleaflist[j]].surfaces, surfaceIndex);
         }
 
         this.vertexData = vertexData;
@@ -1080,145 +1239,7 @@ export class BSPFile {
             const numfaces = nodes.getUint16(idx + 0x1A, true);
             const area = nodes.getInt16(idx + 0x1C, true);
 
-            const surfaceset = new Set<number>();
-            for (let i = firstface; i < firstface + numfaces; i++) {
-                const surfaceIdx = surfaceRemapTable[i];
-                if (surfaceIdx === -1)
-                    continue;
-                surfaceset.add(surfaceIdx);
-            }
-            this.nodelist.push({ plane, child0, child1, bbox, area, surfaces: [...surfaceset.values()] });
-        }
-
-        const [leafsLump, leafsVersion] = getLumpDataEx(LumpType.LEAFS);
-        const leafs = leafsLump.createDataView();
-
-        let leafambientindex = getLumpData(LumpType.LEAF_AMBIENT_INDEX_HDR).createDataView();
-        if (leafambientindex.byteLength === 0)
-            leafambientindex = getLumpData(LumpType.LEAF_AMBIENT_INDEX).createDataView();
-
-        let leafambientlighting = getLumpData(LumpType.LEAF_AMBIENT_LIGHTING_HDR, 1).createDataView();
-        if (leafambientlighting.byteLength === 0)
-            leafambientlighting = getLumpData(LumpType.LEAF_AMBIENT_LIGHTING, 1).createDataView();
-
-        const leaffacelist = getLumpData(LumpType.LEAFFACES).createTypedArray(Uint16Array);
-        for (let idx = 0x00; idx < leafs.byteLength;) {
-            const contents = leafs.getUint32(idx + 0x00, true);
-            const cluster = leafs.getUint16(idx + 0x04, true);
-            const areaAndFlags = leafs.getUint16(idx + 0x06, true);
-            const area = areaAndFlags & 0x01FF;
-            const flags = (areaAndFlags >>> 9) & 0x007F;
-            const bboxMinX = leafs.getInt16(idx + 0x08, true);
-            const bboxMinY = leafs.getInt16(idx + 0x0A, true);
-            const bboxMinZ = leafs.getInt16(idx + 0x0C, true);
-            const bboxMaxX = leafs.getInt16(idx + 0x0E, true);
-            const bboxMaxY = leafs.getInt16(idx + 0x10, true);
-            const bboxMaxZ = leafs.getInt16(idx + 0x12, true);
-            const bbox = new AABB(bboxMinX, bboxMinY, bboxMinZ, bboxMaxX, bboxMaxY, bboxMaxZ);
-            const firstleafface = leafs.getUint16(idx + 0x14, true);
-            const numleaffaces = leafs.getUint16(idx + 0x16, true);
-            const firstleafbrush = leafs.getUint16(idx + 0x18, true);
-            const numleafbrushes = leafs.getUint16(idx + 0x1A, true);
-            const leafwaterdata = leafs.getInt16(idx + 0x1C, true);
-            const leafindex = this.leaflist.length;
-
-            idx += 0x1E;
-
-            const ambientLightSamples: BSPLeafAmbientSample[] = [];
-            if (leafsVersion === 0) {
-                // We only have one ambient cube sample, in the middle of the leaf.
-                const ambientCube: Color[] = [];
-
-                for (let j = 0; j < 6; j++) {
-                    const exp = leafs.getUint8(idx + 0x03);
-                    // Game seems to accidentally include an extra factor of 255.0.
-                    const r = unpackColorRGBExp32(leafs.getUint8(idx + 0x00), exp) * 255.0;
-                    const g = unpackColorRGBExp32(leafs.getUint8(idx + 0x01), exp) * 255.0;
-                    const b = unpackColorRGBExp32(leafs.getUint8(idx + 0x02), exp) * 255.0;
-                    ambientCube.push(colorNewFromRGBA(r, g, b));
-                    idx += 0x04;
-                }
-
-                const x = lerp(bboxMinX, bboxMaxX, 0.5);
-                const y = lerp(bboxMinY, bboxMaxY, 0.5);
-                const z = lerp(bboxMinZ, bboxMaxZ, 0.5);
-                const pos = vec3.fromValues(x, y, z);
-
-                ambientLightSamples.push({ ambientCube, pos });
-
-                // Padding.
-                idx += 0x02;
-            } else {
-                const ambientSampleCount = leafambientindex.getUint16(leafindex * 0x04 + 0x00, true);
-                const firstAmbientSample = leafambientindex.getUint16(leafindex * 0x04 + 0x02, true);
-                for (let i = 0; i < ambientSampleCount; i++) {
-                    const ambientSampleOffs = (firstAmbientSample + i) * 0x1C;
-
-                    // Ambient cube samples
-                    const ambientCube: Color[] = [];
-                    let ambientSampleColorIdx = ambientSampleOffs;
-                    for (let j = 0; j < 6; j++) {
-                        const exp = leafambientlighting.getUint8(ambientSampleColorIdx + 0x03);
-                        const r = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x00), exp) * 255.0;
-                        const g = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x01), exp) * 255.0;
-                        const b = unpackColorRGBExp32(leafambientlighting.getUint8(ambientSampleColorIdx + 0x02), exp) * 255.0;
-                        ambientCube.push(colorNewFromRGBA(r, g, b));
-                    }
-
-                    // Fraction of bbox.
-                    const xf = leafambientlighting.getUint8(ambientSampleOffs + 0x18) / 0xFF;
-                    const yf = leafambientlighting.getUint8(ambientSampleOffs + 0x19) / 0xFF;
-                    const zf = leafambientlighting.getUint8(ambientSampleOffs + 0x1A) / 0xFF;
-
-                    const x = lerp(bboxMinX, bboxMaxX, xf);
-                    const y = lerp(bboxMinY, bboxMaxY, yf);
-                    const z = lerp(bboxMinZ, bboxMaxZ, zf);
-                    const pos = vec3.fromValues(x, y, z);
-
-                    ambientLightSamples.push({ ambientCube, pos });
-                }
-
-                // Padding.
-                idx += 0x02;
-            }
-
-            const surfaceset = new Set<number>();
-            for (let i = firstleafface; i < firstleafface + numleaffaces; i++) {
-                const surfaceIdx = surfaceRemapTable[leaffacelist[i]];
-                if (surfaceIdx === -1)
-                    continue;
-                surfaceset.add(surfaceIdx);
-            }
-
-            this.leaflist.push({ bbox, cluster, area, ambientLightSamples, surfaces: [...surfaceset.values()] });
-        }
-
-        const models = getLumpData(LumpType.MODELS).createDataView();
-        for (let idx = 0x00; idx < models.byteLength; idx += 0x30) {
-            const minX = models.getFloat32(idx + 0x00, true);
-            const minY = models.getFloat32(idx + 0x04, true);
-            const minZ = models.getFloat32(idx + 0x08, true);
-            const maxX = models.getFloat32(idx + 0x0C, true);
-            const maxY = models.getFloat32(idx + 0x10, true);
-            const maxZ = models.getFloat32(idx + 0x14, true);
-            const bbox = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
-
-            const originX = models.getFloat32(idx + 0x18, true);
-            const originY = models.getFloat32(idx + 0x1C, true);
-            const originZ = models.getFloat32(idx + 0x20, true);
-
-            const headnode = models.getUint32(idx + 0x24, true);
-            const firstface = models.getUint32(idx + 0x28, true);
-            const numfaces = models.getUint32(idx + 0x2C, true);
-
-            const surfaceset = new Set<number>();
-            for (let i = firstface; i < firstface + numfaces; i++) {
-                const surfaceIdx = surfaceRemapTable[i];
-                if (surfaceIdx === -1)
-                    continue;
-                surfaceset.add(surfaceIdx);
-            }
-            this.models.push({ bbox, headnode, surfaces: [...surfaceset.values()] });
+            this.nodelist.push({ plane, child0, child1, bbox, area });
         }
 
         const cubemaps = getLumpData(LumpType.CUBEMAPS).createDataView();
@@ -1297,9 +1318,9 @@ export class BSPFile {
                 }
             }
 
-            const attn = vec3.fromValues(constant_attn, linear_attn, quadratic_attn);
+            const distAttenuation = vec3.fromValues(constant_attn, linear_attn, quadratic_attn);
 
-            this.worldlights.push({ pos, intensity, normal, type, radius, attn });
+            this.worldlights.push({ pos, intensity, normal, type, radius, distAttenuation, exponent, stopdot, stopdot2 });
         }
 
         const dprp = getGameLumpData('dprp');
@@ -1311,14 +1332,19 @@ export class BSPFile {
             this.staticObjects = deserializeGameLump_sprp(sprp[0], sprp[1]);
     }
 
-    public findLeafForPoint(p: vec3, nodeid: number = 0): number {
+    public findLeafIdxForPoint(p: ReadonlyVec3, nodeid: number = 0): number {
         if (nodeid < 0) {
             return -nodeid - 1;
         } else {
             const node = this.nodelist[nodeid];
             const dot = node.plane.distance(p[0], p[1], p[2]);
-            return this.findLeafForPoint(p, dot >= 0.0 ? node.child0 : node.child1);
+            return this.findLeafIdxForPoint(p, dot >= 0.0 ? node.child0 : node.child1);
         }
+    }
+
+    public findLeafForPoint(p: ReadonlyVec3): BSPLeaf | null {
+        const leafidx = this.findLeafIdxForPoint(p);
+        return leafidx >= 0 ? this.leaflist[leafidx] : null;
     }
 
     public markClusterSet(dst: number[], aabb: AABB, nodeid: number = 0): void {

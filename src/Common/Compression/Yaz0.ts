@@ -16,11 +16,8 @@
 //         Offset: bits 5-15
 //         Copy Length+2 bytes from Offset back in the output buffer.
 
-import { assert, readString, align } from '../../util';
+import { assert, readString } from '../../util';
 import ArrayBufferSlice from '../../ArrayBufferSlice';
-
-import type { yaz0_asExports } from '../../wat_modules';
-import type { WasmMemoryManager as WasmMemoryManagerType } from '../../WasmMemoryManager';
 
 // Simple software version for environments without WebAssembly.
 export function decompressSW(srcBuffer: ArrayBufferSlice): ArrayBufferSlice {
@@ -35,6 +32,8 @@ export function decompressSW(srcBuffer: ArrayBufferSlice): ArrayBufferSlice {
 
     while (true) {
         const commandByte = srcView.getUint8(srcOffs++);
+        console.log('loop', srcOffs.toString(16), commandByte.toString(16), uncompressedSize.toString(16));
+
         let i = 8;
         while (i--) {
             if (commandByte & (1 << i)) {
@@ -66,39 +65,13 @@ export function decompressSW(srcBuffer: ArrayBufferSlice): ArrayBufferSlice {
     }
 }
 
-// Accelerated WASM-powered version.
-declare module "../../wat_modules" {
-    interface yaz0_asExports {
-        decompress(pDst: number, pSrc: number, dstSize: number): void;
-    }
-}
-
 export class Yaz0DecompressorWASM {
-    constructor(private wasm: yaz0_asExports, private memoryManager: WasmMemoryManagerType) {
+    constructor(private yaz0dec: (src: Uint8Array) => Uint8Array) {
     }
 
     public decompress(srcBuffer: ArrayBufferSlice): ArrayBufferSlice {
-        const srcView = srcBuffer.createDataView();
-        assert(readString(srcBuffer, 0x00, 0x04) === 'Yaz0');
-
-        const dstSize = srcView.getUint32(0x04, false);
-        const srcSize = srcBuffer.byteLength;
-
-        const pDst = 0;
-        const pSrc = align(dstSize, 0x10);
-
-        const heapSize = pSrc + align(srcSize, 0x10);
-
-        const heap = this.memoryManager.resize(heapSize);
-
-        // Copy src buffer.
-        heap.set(srcBuffer.createTypedArray(Uint8Array, 0x10), pSrc);
-
-        this.wasm.decompress(pDst, pSrc, dstSize);
-
-        // Copy the result buffer to a new buffer for memory usage purposes.
-        const resultBuf = new ArrayBufferSlice((heap.buffer as ArrayBuffer)).copyToBuffer(pDst, dstSize);
-        return new ArrayBufferSlice(resultBuf);
+        const buf = this.yaz0dec(srcBuffer.createTypedArray(Uint8Array));
+        return new ArrayBufferSlice(buf.buffer, buf.byteOffset, buf.byteLength);
     }
 }
 
@@ -106,19 +79,14 @@ export function decompressSync(d: Yaz0DecompressorWASM, srcBuffer: ArrayBufferSl
     return d.decompress(srcBuffer);
 }
 
-// XXX(jstpierre): Firefox has GC pressure when constructing new WebAssembly.Memory instances
-// on 64-bit machines. Construct a global WebAssembly.Memory and use it. Remove this when the
-// bug is fixed. https://bugzilla.mozilla.org/show_bug.cgi?id=1459761#c5
 let _decompressor: Yaz0DecompressorWASM | null = null;
 
 export async function getWASM(): Promise<Yaz0DecompressorWASM> {
     if (_decompressor === null) {
-        const { yaz0_asInstance } = await import("../../wat_modules");
-        const { WasmMemoryManager } = await import("../../WasmMemoryManager");
-        const instance = await yaz0_asInstance();
-        const memoryManager = new WasmMemoryManager(instance.memory);
-        _decompressor = new Yaz0DecompressorWASM(instance, memoryManager);
+        const { yaz0dec } = await import('../../../rust/pkg/index');
+        _decompressor = new Yaz0DecompressorWASM(yaz0dec);
     }
+
     return _decompressor;
 }
 

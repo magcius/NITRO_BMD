@@ -1,14 +1,14 @@
 
 import { SceneGfx, ViewerRenderInput } from "../viewer";
-import { BasicRenderTarget, makeClearRenderPassDescriptor, ColorTexture, noClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxDevice, GfxHostAccessPass, GfxRenderPass, GfxTexture } from "../gfx/platform/GfxPlatform";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxDevice } from "../gfx/platform/GfxPlatform";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
 import { OrbitCameraController, texProjCameraSceneTex } from "../Camera";
 import { colorNewFromRGBA } from "../Color";
 import * as JPA from '../Common/JSYSTEM/JPA';
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { mat4, vec3 } from "gl-matrix";
-import { GfxRenderInstManager, executeOnPass } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, executeOnPass } from "../gfx/render/GfxRenderInstManager";
 import { assertExists, hexzero, assert } from "../util";
 import { SceneContext } from "../SceneBase";
 import { LAYER_ICON, HIGHLIGHT_COLOR, Checkbox, TextField } from "../ui";
@@ -21,9 +21,10 @@ import { TextureMapping } from "../TextureHolder";
 import { EFB_WIDTH, EFB_HEIGHT, GX_Program } from "../gx/gx_material";
 import { NamedArrayBufferSlice } from "../DataFetcher";
 import { FloatingPanel } from "../DebugFloaters";
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from "../gfx/render/GfxRenderGraph";
 
-function setTextureMappingIndirect(m: TextureMapping, sceneTexture: GfxTexture): void {
-    m.gfxTexture = sceneTexture;
+function setLateTextureMapping(m: TextureMapping, lateBinding: string): void {
+    m.lateBinding = lateBinding;
     m.width = EFB_WIDTH;
     m.height = EFB_HEIGHT;
     m.flipY = true;
@@ -44,6 +45,12 @@ class BasicEffectSystem {
     constructor(device: GfxDevice, private jpac: JPA.JPAC) {
         this.emitterManager = new JPA.JPAEmitterManager(device, 6000, 300);
         this.jpacData = new JPA.JPACData(this.jpac);
+
+        for (let i = 0; i < this.fbTextureNames.length; i++) {
+            const m = this.jpacData.getTextureMappingReference(this.fbTextureNames[i]);
+            if (m !== null)
+                setLateTextureMapping(m, 'opaque-scene-texture');
+        }
     }
 
     private findResourceData(userIndex: number): [JPA.JPACData, JPA.JPAResourceRaw] | null {
@@ -52,14 +59,6 @@ class BasicEffectSystem {
             return [this.jpacData, r];
 
         return null;
-    }
-
-    public setOpaqueSceneTexture(opaqueSceneTexture: GfxTexture): void {
-        for (let i = 0; i < this.fbTextureNames.length; i++) {
-            const m = this.jpacData.getTextureMappingReference(this.fbTextureNames[i]);
-            if (m !== null)
-                setTextureMappingIndirect(m, opaqueSceneTexture);
-        }
     }
 
     public resourceDataUsesFB(resourceData: JPA.JPAResourceData): boolean {
@@ -199,11 +198,10 @@ function makeDataList(strings: string[]): HTMLDataListElement {
 
 const enum Pass { MAIN, INDIRECT }
 
-const clearPass = makeClearRenderPassDescriptor(true, colorNewFromRGBA(0.2, 0.2, 0.2, 1.0));
+const clearPass = makeClearRenderPassDescriptor(colorNewFromRGBA(0.2, 0.2, 0.2, 1.0));
 const scratchVec3 = vec3.create();
 const scratchMatrix = mat4.create();
 export class Explorer implements SceneGfx {
-    private renderTarget = new BasicRenderTarget();
     private renderHelper: GfxRenderHelper;
     private effectSystem: BasicEffectSystem;
     private uiContainer: HTMLElement;
@@ -213,7 +211,6 @@ export class Explorer implements SceneGfx {
     private wiggleEmitters: boolean = false;
     private loopEmitters: boolean = true;
     private forceCentered: boolean = false;
-    private opaqueSceneTexture = new ColorTexture();
 
     // UI
     private currentEffectIndexEntry: SimpleTextEntry;
@@ -387,7 +384,7 @@ export class Explorer implements SceneGfx {
         for (let i = 0; i < this.emitters.length; i++) {
             const emitter = this.emitters[i];
             // Emitter might have died of natural causes.
-            if (!!(emitter.flags & JPA.BaseEmitterFlags.TERMINATE))
+            if (!!(emitter.status & JPA.JPAEmitterStatus.TERMINATE))
                 continue;
             this.effectSystem.forceDeleteEmitter(this.emitters[i]);
         }
@@ -402,7 +399,7 @@ export class Explorer implements SceneGfx {
         return new OrbitCameraController();
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    private prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         const renderInstManager = this.renderHelper.renderInstManager;
 
         const baseTemplate = this.renderHelper.pushTemplateRenderInst();
@@ -412,7 +409,7 @@ export class Explorer implements SceneGfx {
 
         if (this.loopEmitters) {
             for (let i = this.emitters.length - 1; i >= 0; i--) {
-                if (!!(this.emitters[i].flags & JPA.BaseEmitterFlags.TERMINATE)) {
+                if (!!(this.emitters[i].status & JPA.JPAEmitterStatus.TERMINATE)) {
                     this.emitters.splice(i, 1);
                     this.createEmitter();
                 }
@@ -432,14 +429,13 @@ export class Explorer implements SceneGfx {
             vec3.copy(this.emitters[i].globalTranslation, scratchVec3);
 
             if (this.forceCentered)
-                vec3.set(this.emitters[i].emitterTrs, 0, 0, 0);
+                vec3.set(this.emitters[i].localTranslation, 0, 0, 0);
 
             const ctx = getDebugOverlayCanvas2D();
             drawWorldSpacePoint(ctx, viewerInput.camera.clipFromWorldMatrix, this.emitters[i].globalTranslation);
         }
 
         this.effectSystem.calc(viewerInput);
-        this.effectSystem.setOpaqueSceneTexture(this.opaqueSceneTexture.gfxTexture!);
 
         const efTemplate = renderInstManager.pushTemplateRenderInst();
         efTemplate.setBindingLayouts(gxBindingLayouts);
@@ -463,28 +459,48 @@ export class Explorer implements SceneGfx {
         renderInstManager.popTemplateRenderInst();
 
         renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: ViewerRenderInput): GfxRenderPass {
+    public render(device: GfxDevice, viewerInput: ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
 
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, clearPass);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, clearPass);
 
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        this.opaqueSceneTexture.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, clearPass, this.opaqueSceneTexture.gfxTexture);
-        executeOnPass(renderInstManager, device, mainPassRenderer, Pass.MAIN);
-        device.submitPass(mainPassRenderer);
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                executeOnPass(renderInstManager, device, passRenderer, Pass.MAIN);
+            });
+        });
 
-        const indirectPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, noClearRenderPassDescriptor);
-        executeOnPass(renderInstManager, device, indirectPassRenderer, Pass.INDIRECT);
+        builder.pushPass((pass) => {
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
 
+            const opaqueSceneTextureID = builder.resolveRenderTarget(mainColorTargetID);
+            pass.attachResolveTexture(opaqueSceneTextureID);
+
+            pass.exec((passRenderer, scope) => {
+                const opaqueSceneTexture = scope.getResolveTextureForID(opaqueSceneTextureID);
+                renderInstManager.setVisibleByFilterKeyExact(Pass.INDIRECT);
+                renderInstManager.simpleRenderInstList!.resolveLateSamplerBinding('opaque-scene-texture', { gfxTexture: opaqueSceneTexture, gfxSampler: null, lateBinding: null });
+                executeOnPass(renderInstManager, device, passRenderer, Pass.INDIRECT);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return indirectPassRenderer;
     }
 
     public destroy(device: GfxDevice) {

@@ -1,26 +1,28 @@
 
 import { FLVER, VertexInputSemantic, Material, Primitive, Batch, VertexAttribute } from "./flver";
-import { GfxDevice, GfxInputState, GfxInputLayout, GfxFormat, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxBufferUsage, GfxBuffer, GfxVertexBufferDescriptor, GfxBindingLayoutDescriptor, GfxBlendMode, GfxBlendFactor, GfxCullMode, GfxMegaStateDescriptor, GfxProgram, GfxSampler, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor } from "../gfx/platform/GfxPlatform";
+import { GfxDevice, GfxInputState, GfxInputLayout, GfxFormat, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxBufferUsage, GfxBuffer, GfxVertexBufferDescriptor, GfxBindingLayoutDescriptor, GfxBlendMode, GfxBlendFactor, GfxCullMode, GfxMegaStateDescriptor, GfxProgram, GfxSampler, GfxTexFilterMode, GfxMipFilterMode, GfxWrapMode, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, GfxFrontFaceMode } from "../gfx/platform/GfxPlatform";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { coalesceBuffer, GfxCoalescedBuffer } from "../gfx/helpers/BufferHelpers";
-import { convertToTriangleIndexBuffer, GfxTopology, getTriangleIndexCountForTopologyIndexCount } from "../gfx/helpers/TopologyHelpers";
-import { makeSortKey, GfxRendererLayer, setSortKeyDepth, GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { convertToTriangleIndexBuffer, GfxTopology, filterDegenerateTriangleIndexBuffer } from "../gfx/helpers/TopologyHelpers";
+import { makeSortKey, GfxRendererLayer, setSortKeyDepth, GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { DeviceProgram } from "../Program";
 import { DDSTextureHolder } from "./dds";
 import { nArray, assert, assertExists } from "../util";
 import { TextureMapping } from "../TextureHolder";
-import { mat4, vec4 } from "gl-matrix";
+import { mat4, vec3, vec4 } from "gl-matrix";
 import * as Viewer from "../viewer";
-import { Camera, computeViewMatrix, computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from "../Camera";
-import { fillMatrix4x4, fillMatrix4x3, fillVec4v, fillVec4 } from "../gfx/helpers/UniformBufferHelpers";
+import { Camera, computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from "../Camera";
+import { fillMatrix4x4, fillMatrix4x3, fillVec4v, fillVec4, fillVec3v, fillColor } from "../gfx/helpers/UniformBufferHelpers";
 import { AABB } from "../Geometry";
 import { ModelHolder, MaterialDataHolder } from "./scenes";
 import { MSB, Part } from "./msb";
-import { MathConstants } from "../MathHelpers";
+import { getMatrixAxisZ, getMatrixTranslation, MathConstants } from "../MathHelpers";
 import { MTD, MTDTexture } from './mtd';
-import { interactiveVizSliderSelect } from '../DebugJunk';
+import { drawWorldSpaceVector, getDebugOverlayCanvas2D, interactiveVizSliderSelect } from '../DebugJunk';
 import { setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
+import { dfRange, dfShow } from "../DebugFloaters";
+import { colorNewFromRGBA } from "../Color";
 
 function shouldRenderPrimitive(primitive: Primitive): boolean {
     return primitive.flags === 0;
@@ -71,39 +73,41 @@ function translateLocation(attr: VertexAttribute): number {
 
 function translateDataType(dataType: number): GfxFormat {
     switch (dataType) {
-        case 17:
-            // Bone indices -- four bytes.
-            return GfxFormat.U8_RGBA_NORM;
-        case 19:
-            // Colors and normals -- four bytes.
-            return GfxFormat.U8_RGBA_NORM;
-        case 21:
-            // One set of UVs -- two shorts.
-            return GfxFormat.S16_RG;
-        case 22:
-            // Two sets of UVs -- four shorts.
-            return GfxFormat.S16_RGBA;
-        case 26:
-            // Bone weight -- four shorts.
-            return GfxFormat.S16_RGBA_NORM;
-        case 2:
-        case 18:
-        case 20:
-        case 23:
-        case 24:
-        case 25:
-            // Everything else -- three floats.
-            return GfxFormat.F32_RGBA;
-        default:
-            throw "whoops";
+    case 17:
+        // Bone indices -- four bytes.
+        return GfxFormat.U8_RGBA_NORM;
+    case 19:
+        // Colors and normals -- four bytes.
+        return GfxFormat.U8_RGBA_NORM;
+    case 21:
+        // One set of UVs -- two shorts.
+        return GfxFormat.S16_RG;
+    case 22:
+        // Two sets of UVs -- four shorts.
+        return GfxFormat.S16_RGBA;
+    case 26:
+        // Bone weight -- four shorts.
+        return GfxFormat.S16_RGBA_NORM;
+    case 2:
+    case 18:
+    case 20:
+    case 23:
+    case 24:
+    case 25:
+        // Everything else -- three floats.
+        return GfxFormat.F32_RGBA;
+    default:
+        throw "whoops";
     }
 }
 
 class BatchData {
     public inputLayout: GfxInputLayout;
-    public inputStates: GfxInputState[] = [];
+    public inputState: GfxInputState;
+    public primitiveIndexCounts: number[] = [];
+    public primitiveIndexStarts: number[] = [];
 
-    constructor(device: GfxDevice, cache: GfxRenderCache, flverData: FLVERData, public batch: Batch, vertexBuffer: GfxCoalescedBuffer, indexBuffers: GfxCoalescedBuffer[]) {
+    constructor(device: GfxDevice, cache: GfxRenderCache, flverData: FLVERData, public batch: Batch, vertexBuffer: GfxCoalescedBuffer, indexBuffers: GfxCoalescedBuffer[], triangleIndexCounts: number[]) {
         const flverInputState = flverData.flver.inputStates[batch.inputStateIndex];
         const flverInputLayout = flverData.flver.inputLayouts[flverInputState.inputLayoutIndex];
         const buffers: GfxVertexBufferDescriptor[] = [vertexBuffer];
@@ -134,17 +138,18 @@ class BatchData {
             vertexBufferDescriptors,
         });
 
+        const indexBuffer0 = indexBuffers[0];
+        this.inputState = device.createInputState(this.inputLayout, buffers, indexBuffer0);
+
         for (let j = 0; j < batch.primitiveIndexes.length; j++) {
             const coaIndexBuffer = assertExists(indexBuffers.shift());
-            const indexBuffer: GfxIndexBufferDescriptor = coaIndexBuffer;
-            const inputState = device.createInputState(this.inputLayout, buffers, indexBuffer);
-            this.inputStates.push(inputState);
+            this.primitiveIndexCounts.push(assertExists(triangleIndexCounts.shift()));
+            this.primitiveIndexStarts.push((coaIndexBuffer.byteOffset - indexBuffer0.byteOffset) / 2);
         }
     }
 
     public destroy(device: GfxDevice): void {
-        for (let i = 0; i < this.inputStates.length; i++)
-            device.destroyInputState(this.inputStates[i]);
+        device.destroyInputState(this.inputState);
     }
 }
 
@@ -164,12 +169,16 @@ export class FLVERData {
         const vertexBuffers = coalesceBuffer(device, GfxBufferUsage.VERTEX, vertexBufferDatas);
         this.vertexBuffer = vertexBuffers[0].buffer;
 
+        const triangleIndexCounts: number[] = [];
+
         for (let i = 0; i < flver.batches.length; i++) {
             const batch = flver.batches[i];
             for (let j = 0; j < batch.primitiveIndexes.length; j++) {
                 const primitive = flver.primitives[batch.primitiveIndexes[j]];
-                const triangleIndexData = convertToTriangleIndexBuffer(GfxTopology.TRISTRIP, primitive.indexData.createTypedArray(Uint16Array));
+                const triangleIndexData = filterDegenerateTriangleIndexBuffer(convertToTriangleIndexBuffer(GfxTopology.TRISTRIP, primitive.indexData.createTypedArray(Uint16Array)));
+                const triangleIndexCount = triangleIndexData.byteLength / 2;
                 indexBufferDatas.push(new ArrayBufferSlice(triangleIndexData.buffer));
+                triangleIndexCounts.push(triangleIndexCount);
                 primitive.indexData = null as unknown as ArrayBufferSlice;
             }
         }
@@ -180,7 +189,7 @@ export class FLVERData {
         for (let i = 0; i < flver.batches.length; i++) {
             const batch = flver.batches[i];
             const coaVertexBuffer = vertexBuffers[batch.inputStateIndex];
-            const batchData = new BatchData(device, cache, this, batch, coaVertexBuffer, indexBuffers);
+            const batchData = new BatchData(device, cache, this, batch, coaVertexBuffer, indexBuffers, triangleIndexCounts);
             this.batchData.push(batchData);
         }
 
@@ -224,18 +233,23 @@ class DKSProgram extends DeviceProgram {
     public static BindingDefinitions = `
 // Expected to be constant across the entire scene.
 layout(std140) uniform ub_SceneParams {
-    Mat4x4 u_Projection;
+    Mat4x4 u_ProjectionView;
+    vec4 u_CameraPosWorld;
+};
+
+struct DirectionalLight {
+    vec4 DirWorld;
+    vec4 Color;
 };
 
 layout(std140) uniform ub_MeshFragParams {
-    Mat4x3 u_ViewFromLocal[1];
+    Mat4x3 u_WorldFromLocal[1];
     // Fourth element has g_DiffuseMapColorPower
     vec4 u_DiffuseMapColor;
     // Fourth element has g_SpecularMapColorPower
     vec4 u_SpecularMapColor;
     vec4 u_TexScroll[3];
-    // Light direction in view space
-    vec4 u_LightDirView;
+    DirectionalLight u_DirectionalLight;
     // g_SpecularPower
     vec4 u_Misc[1];
 };
@@ -252,30 +266,55 @@ ${DKSProgram.BindingDefinitions}
 
 varying vec4 v_Color;
 varying vec2 v_TexCoord[3];
-varying vec3 v_PositionView;
-varying vec3 v_NormalView;
-varying vec3 v_TangentView;
-varying vec3 v_BitangentView;
+varying vec3 v_PositionWorld;
+
+// 3x3 matrix for our tangent space basis.
+varying vec3 v_TangentSpaceBasis0;
+varying vec3 v_TangentSpaceBasis1;
+varying vec3 v_TangentSpaceBasis2;
 `;
 
     public vert = `
-layout(location = 0) in vec3 a_Position;
-layout(location = 1) in vec4 a_Color;
-layout(location = 2) in vec4 a_TexCoord0;
-layout(location = 3) in vec4 a_TexCoord1;
-layout(location = 4) in vec4 a_Normal;
-layout(location = 5) in vec4 a_Tangent;
-layout(location = 6) in vec4 a_Bitangent;
+layout(location = ${DKSProgram.a_Position})  in vec3 a_Position;
+layout(location = ${DKSProgram.a_Color})     in vec4 a_Color;
+layout(location = ${DKSProgram.a_TexCoord0}) in vec4 a_TexCoord0;
+layout(location = ${DKSProgram.a_TexCoord1}) in vec4 a_TexCoord1;
+layout(location = ${DKSProgram.a_Normal})    in vec4 a_Normal;
+layout(location = ${DKSProgram.a_Tangent})   in vec4 a_Tangent;
+
+#ifdef HAS_BITANGENT
+layout(location = ${DKSProgram.a_Bitangent}) in vec4 a_Bitangent;
+#endif
 
 #define UNORM_TO_SNORM(xyz) ((xyz - 0.5) * 2.0)
 
+vec3 MulNormalMatrix(Mat4x3 t_Matrix, vec4 t_Value) {
+    // Pull out the squared scaling.
+    vec3 t_Col0 = Mat4x3GetCol0(t_Matrix);
+    vec3 t_Col1 = Mat4x3GetCol1(t_Matrix);
+    vec3 t_Col2 = Mat4x3GetCol2(t_Matrix);
+    vec4 t_SqScale = vec4(dot(t_Col0, t_Col0), dot(t_Col1, t_Col1), dot(t_Col2, t_Col2), 1.0);
+    return normalize(Mul(t_Matrix, t_Value / t_SqScale));
+}
+
 void main() {
-    vec4 t_PositionView = Mul(_Mat4x4(u_ViewFromLocal[0]), vec4(a_Position, 1.0));
-    v_PositionView = t_PositionView.xyz;
-    gl_Position = Mul(u_Projection, t_PositionView);
-    v_NormalView = normalize(Mul(_Mat4x4(u_ViewFromLocal[0]), vec4(UNORM_TO_SNORM(a_Normal.xyz), 0.0)).xyz);
-    v_TangentView = normalize(Mul(_Mat4x4(u_ViewFromLocal[0]), vec4(UNORM_TO_SNORM(a_Tangent.xyz), 0.0)).xyz);
-    v_BitangentView = normalize(Mul(_Mat4x4(u_ViewFromLocal[0]), vec4(UNORM_TO_SNORM(a_Bitangent.xyz), 0.0)).xyz);
+    vec4 t_PositionWorld = Mul(_Mat4x4(u_WorldFromLocal[0]), vec4(a_Position, 1.0));
+    v_PositionWorld = t_PositionWorld.xyz;
+    gl_Position = Mul(u_ProjectionView, t_PositionWorld);
+
+    vec3 t_NormalWorld = MulNormalMatrix(u_WorldFromLocal[0], vec4(UNORM_TO_SNORM(a_Normal.xyz), 0.0));
+    vec3 t_TangentSWorld = MulNormalMatrix(u_WorldFromLocal[0], vec4(UNORM_TO_SNORM(a_Tangent.xyz), 0.0));
+
+#ifdef HAS_BITANGENT
+    vec3 t_TangentTWorld = UNORM_TO_SNORM(a_Bitangent.xyz);
+#else
+    vec3 t_TangentTWorld = normalize(cross(t_NormalWorld, t_TangentSWorld));
+#endif
+
+    v_TangentSpaceBasis0 = t_TangentSWorld;
+    v_TangentSpaceBasis1 = t_TangentTWorld * sign(UNORM_TO_SNORM(a_Tangent.w));
+    v_TangentSpaceBasis2 = t_NormalWorld;
+
     v_Color = a_Color;
     v_TexCoord[0] = ((a_TexCoord0.xy) / 1024.0) + u_TexScroll[0].xy;
     v_TexCoord[1] = ((a_TexCoord0.zw) / 1024.0) + u_TexScroll[1].xy;
@@ -342,7 +381,7 @@ ${diffuseEpi}
             return `
     vec3 t_Specular1 = ${this.buildTexAccess(specular1)}.rgb;
     vec3 t_Specular2 = ${this.buildTexAccess(specular2)}.rgb;
-    vec3 t_Specular = mix(t_Specular1, t_Specular2, v_Color.a);
+    vec3 t_Specular = mix(t_Specular1, t_Specular2, t_Blend);
 ${specularEpi}
 `;
         } else if (specular1 !== null) {
@@ -362,34 +401,27 @@ ${specularEpi}
         const bumpmap1 = this.getTexture('g_Bumpmap');
         const bumpmap2 = this.getTexture('g_Bumpmap_2');
 
-        const bumpmapPro = `
-    vec3 t_Normal = v_NormalView.xyz;
-    vec3 t_Tangent = v_TangentView.xyz;
-    vec3 t_Bitangent = v_BitangentView.xyz;
-`;
-
         const bumpmapEpi = `
-    vec3 t_NormalDirView = (t_LocalNormal.x * t_Tangent + t_LocalNormal.y * t_Bitangent + t_LocalNormal.z * t_Normal);
+    vec3 t_NormalTangentSpace = DecodeNormalMap(t_BumpmapSample.xyz);
+    vec3 t_NormalDirWorld = CalcNormalWorld(t_NormalTangentSpace, v_TangentSpaceBasis0, v_TangentSpaceBasis1, v_TangentSpaceBasis2);
 `;
 
         if (bumpmap1 !== null && bumpmap2 !== null) {
             return `
-${bumpmapPro}
     vec3 t_Bumpmap1 = ${this.buildTexAccess(bumpmap1)}.rgb;
     vec3 t_Bumpmap2 = ${this.buildTexAccess(bumpmap2)}.rgb;
-    vec3 t_LocalNormal = mix(t_Bumpmap1, t_Bumpmap2, v_Color.a);
+    vec3 t_BumpmapSample = mix(t_Bumpmap1, t_Bumpmap2, t_Blend);
 ${bumpmapEpi}
 `;
         } else if (bumpmap1 !== null) {
             return `
-${bumpmapPro}
     vec3 t_Bumpmap1 = ${this.buildTexAccess(bumpmap1)}.rgb;
-    vec3 t_LocalNormal = t_Bumpmap1;
+    vec3 t_BumpmapSample = t_Bumpmap1;
 ${bumpmapEpi}
 `;
         } else {
             return `
-    vec3 t_NormalDirView = v_NormalView;
+    vec3 t_NormalDirWorld = v_TangentSpaceBasis2;
 `;
         }
     }
@@ -421,8 +453,21 @@ ${bumpmapEpi}
 
     private genFrag(): string {
         return `
+vec3 DecodeNormalMap(vec3 t_NormalMapIn) {
+    // Decode two-channel normal map
+    vec3 t_NormalMap;
+    t_NormalMap.xy = t_NormalMapIn.xy * 2.0 - 1.0;
+    t_NormalMap.z = sqrt(1.0 - min(dot(t_NormalMap.xy, t_NormalMap.xy), 1.0));
+    return normalize(t_NormalMap.xyz);
+}
+
+vec3 CalcNormalWorld(in vec3 t_MapNormal, in vec3 t_Basis0, in vec3 t_Basis1, in vec3 t_Basis2) {
+    return t_MapNormal.xxx * t_Basis0 + t_MapNormal.yyy * t_Basis1 + t_MapNormal.zzz * t_Basis2;
+}
+
 void main() {
     vec4 t_Color = vec4(1.0);
+    float t_Blend = v_Color.a;
 
     t_Color *= v_Color;
 
@@ -436,24 +481,25 @@ void main() {
     vec3 t_IncomingIndirectRadiance = vec3(0.0);
 
     ${this.genNormalDir()}
+    t_NormalDirWorld *= gl_FrontFacing ? 1.0 : -1.0;
 
-    // Basic fake directional.
+    // Basic directional light.
     // TODO(jstpierre): Read environment maps.
+    vec3 t_LightDirWorld = -u_DirectionalLight.DirWorld.xyz;
+    vec3 t_LightColor = u_DirectionalLight.Color.rgb;
 
-    vec3 t_LightDirView = -u_LightDirView.xyz;
-    vec3 t_LightColor = vec3(0.9, 0.95, 0.95) * 2.0;
-
-    float t_DiffuseIntensity = max(dot(t_NormalDirView, t_LightDirView), 0.0);
+    float t_DiffuseIntensity = max(dot(t_NormalDirWorld, t_LightDirWorld), 0.0);
     t_IncomingDiffuseRadiance += t_LightColor * t_DiffuseIntensity;
 
-    vec3 t_ViewDir = normalize(-v_PositionView);
+    vec3 t_PositionToEye = u_CameraPosWorld.xyz - v_PositionWorld.xyz;
+    vec3 t_WorldDirectionToEye = normalize(t_PositionToEye);
 
     // Fake ambient with a sun color.
     t_IncomingIndirectRadiance += vec3(0.92, 0.95, 0.85) * 0.4;
 
     if (t_DiffuseIntensity > 0.0) {
-        vec3 t_ReflectanceDir = reflect(-t_LightDirView, t_NormalDirView);
-        float t_SpecularIntensity = pow(max(dot(t_ReflectanceDir, t_ViewDir), 0.0), u_SpecularPower);
+        vec3 t_ReflectanceDir = reflect(-t_LightDirWorld, t_NormalDirWorld);
+        float t_SpecularIntensity = pow(max(dot(t_ReflectanceDir, t_WorldDirectionToEye), 0.0), u_SpecularPower);
         t_IncomingSpecularRadiance += t_LightColor * t_SpecularIntensity;
     }
 
@@ -475,18 +521,18 @@ void main() {
     ${this.genAlphaTest()}
 
 #ifdef USE_LIGHTING
-    int t_Debug = int(u_Misc[0].y);
+    int t_Debug = 0;
 
     if (t_Debug == 1)
-        t_Color.rgb = vec3(t_ViewDir * 0.5 + 0.5);
+        t_Color.rgba = vec4(t_NormalDirWorld.xyz * 0.5 + 0.5, 1.0);
+    else if (t_Debug == 2)
+        t_Color.rgba = vec4(v_TangentSpaceBasis0 * 0.5 + 0.5, 1.0); // TangentS
     else if (t_Debug == 3)
-        t_Color.rgb = vec3(t_LightDirView * 0.5 + 0.5);
+        t_Color.rgba = vec4(v_TangentSpaceBasis1 * 0.5 + 0.5, 1.0); // TangentT
     else if (t_Debug == 4)
-        t_Color.rgb = vec3(t_DiffuseIntensity);
+        t_Color.rgba = vec4(v_TangentSpaceBasis2 * 0.5 + 0.5, 1.0); // Normal
     else if (t_Debug == 5)
-        t_Color.rgb = vec3(t_IncomingSpecularRadiance);
-    else if (t_Debug == 6)
-        t_Color.rgb = t_Specular * t_IncomingSpecularRadiance;
+        t_Color.rgba = vec4(t_IncomingDiffuseRadiance, 1.0);
 #endif
 
     // Convert to gamma-space
@@ -568,33 +614,45 @@ function linkTextureParameter(textureMapping: TextureMapping[], textureHolder: D
     }
 }
 
+const scratchVec3a = vec3.create();
+const scratchVec3b = vec3.create();
 const scratchVec4 = vec4.create();
 class BatchInstance {
     private visible = true;
     private diffuseColor = vec4.fromValues(1, 1, 1, 1);
     private specularColor = vec4.fromValues(0, 0, 0, 0);
     private specularPower = 1.0;
-    private lightDir = vec4.fromValues(-0.4, -0.8, -0.4, 0.0);
     private texScroll = nArray(3, () => vec4.create());
     private textureMapping = nArray(8, () => new TextureMapping());
     private megaState: Partial<GfxMegaStateDescriptor>;
+    private program: DKSProgram;
     private gfxProgram: GfxProgram;
     private sortKey: number;
 
-    constructor(device: GfxDevice, cache: GfxRenderCache, private flverData: FLVERData, private batchData: BatchData, textureHolder: DDSTextureHolder, material: Material, mtd: MTD) {
-        const program = new DKSProgram(mtd);
+    constructor(device: GfxDevice, cache: GfxRenderCache, private flverData: FLVERData, private batchData: BatchData, textureHolder: DDSTextureHolder, private material: Material, private mtd: MTD) {
+        this.program = new DKSProgram(mtd);
 
         // If this is a Phong shader, then turn on lighting.
         if (mtd.shaderPath.includes('_Phn_')) {
             const lightingType: LightingType = assertExists(getMaterialParam(mtd, 'g_LightingType'))[0];
 
             if (lightingType !== LightingType.None)
-                program.defines.set('USE_LIGHTING', '1');
+                this.program.defines.set('USE_LIGHTING', '1');
+        } else if (mtd.shaderPath.includes('_Lit')) {
+            this.program.defines.set('USE_LIGHTING', '1');
         }
 
         // If this is a Water shader, turn off by default until we RE this.
         if (mtd.shaderPath.includes('_Water_'))
             this.visible = false;
+
+        const inputState = flverData.flver.inputStates[batchData.batch.inputStateIndex];
+        const inputLayout = flverData.flver.inputLayouts[inputState.inputLayoutIndex];
+
+        if (inputLayout.vertexAttributes.some((vertexAttribute) => vertexAttribute.semantic === VertexInputSemantic.Bitangent)) {
+            // TODO(jstpierre): I don't think this is correct. It doesn't seem like a bitangent, but more like a bent binormal? Needs investigation.
+            // this.program.defines.set('HAS_BITANGENT', '1');
+        }
 
         linkTextureParameter(this.textureMapping, textureHolder, 'g_Diffuse',    material, mtd);
         linkTextureParameter(this.textureMapping, textureHolder, 'g_Specular',   material, mtd);
@@ -662,41 +720,37 @@ class BatchInstance {
                 vec4.set(this.texScroll[i], param[0], param[1], 0, 0);
         }
 
-        program.ensurePreprocessed(device.queryVendorInfo());
-        this.gfxProgram = cache.createProgram(device, program);
+        this.program.ensurePreprocessed(device.queryVendorInfo());
+        this.gfxProgram = cache.createProgram(device, this.program);
 
         const layer = isTranslucent ? GfxRendererLayer.TRANSLUCENT : GfxRendererLayer.OPAQUE;
         this.sortKey = makeSortKey(layer, 0);
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput, modelMatrix: mat4): void {
+    public prepareToRender(renderContext: RenderContext, device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput, modelMatrix: mat4): void {
         if (!this.visible)
             return;
 
         const template = renderInstManager.pushTemplateRenderInst();
         template.setSamplerBindingsFromTextureMappings(this.textureMapping);
         template.setGfxProgram(this.gfxProgram);
+        template.setInputLayoutAndState(this.batchData.inputLayout, this.batchData.inputState);
+        template.setMegaStateFlags(this.megaState);
 
-        let offs = template.allocateUniformBuffer(DKSProgram.ub_MeshFragParams, 12*1 + 4*7);
+        let offs = template.allocateUniformBuffer(DKSProgram.ub_MeshFragParams, 12*1 + 4*8);
         const d = template.mapUniformBufferF32(DKSProgram.ub_MeshFragParams);
 
-        computeViewMatrix(matrixScratch, viewerInput.camera);
-        mat4.mul(matrixScratch, matrixScratch, modelMatrix);
-        offs += fillMatrix4x3(d, offs, matrixScratch);
+        offs += fillMatrix4x3(d, offs, modelMatrix);
 
         offs += fillVec4v(d, offs, this.diffuseColor);
         offs += fillVec4v(d, offs, this.specularColor);
 
-        const scrollTime = viewerInput.time / 120;
+        const scrollTime = viewerInput.time / 240;
         offs += fillVec4v(d, offs, vec4.scale(scratchVec4, this.texScroll[0], scrollTime));
         offs += fillVec4v(d, offs, vec4.scale(scratchVec4, this.texScroll[1], scrollTime));
         offs += fillVec4v(d, offs, vec4.scale(scratchVec4, this.texScroll[2], scrollTime));
 
-        // Light direction
-        vec4.normalize(scratchVec4, this.lightDir);
-        vec4.transformMat4(scratchVec4, scratchVec4, matrixScratch);
-        vec4.normalize(scratchVec4, scratchVec4);
-        offs += fillVec4v(d, offs, scratchVec4);
+        offs += renderContext.directionalLight.fill(d, offs);
 
         offs += fillVec4(d, offs, this.specularPower);
 
@@ -708,11 +762,9 @@ class BatchInstance {
                 continue;
 
             const renderInst = renderInstManager.newRenderInst();
-            renderInst.setInputLayoutAndState(this.batchData.inputLayout, this.batchData.inputStates[j]);
-            renderInst.setMegaStateFlags(this.megaState);
             if (primitive.cullMode)
                 renderInst.getMegaStateFlags().cullMode = GfxCullMode.BACK;
-            renderInst.drawIndexes(getTriangleIndexCountForTopologyIndexCount(GfxTopology.TRISTRIP, primitive.indexCount));
+            renderInst.drawIndexes(this.batchData.primitiveIndexCounts[j], this.batchData.primitiveIndexStarts[j]);
             renderInst.sortKey = setSortKeyDepth(this.sortKey, depth);
             renderInstManager.submitRenderInst(renderInst);
         }
@@ -721,7 +773,6 @@ class BatchInstance {
     }
 }
 
-const matrixScratch = mat4.create();
 const bboxScratch = new AABB();
 export class FLVERInstance {
     private batchInstances: BatchInstance[] = [];
@@ -747,7 +798,7 @@ export class FLVERInstance {
         this.visible = v;
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(renderContext: RenderContext, device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
         if (!this.visible)
             return;
 
@@ -756,12 +807,14 @@ export class FLVERInstance {
             return;
 
         for (let i = 0; i < this.batchInstances.length; i++)
-            this.batchInstances[i].prepareToRender(device, renderInstManager, viewerInput, this.modelMatrix);
+            this.batchInstances[i].prepareToRender(renderContext, device, renderInstManager, viewerInput, this.modelMatrix);
     }
 }
 
 function fillSceneParamsData(d: Float32Array, camera: Camera, offs: number = 0): void {
-    offs += fillMatrix4x4(d, offs, camera.projectionMatrix);
+    offs += fillMatrix4x4(d, offs, camera.clipFromWorldMatrix);
+    getMatrixTranslation(scratchVec3a, camera.worldMatrix);
+    offs += fillVec3v(d, offs, scratchVec3a);
 }
 
 const bindingLayouts: GfxBindingLayoutDescriptor[] = [
@@ -779,6 +832,39 @@ function modelMatrixFromPart(m: mat4, part: Part): void {
     mat4.rotateY(m, m, part.rotation[1] * MathConstants.DEG_TO_RAD);
     mat4.rotateZ(m, m, part.rotation[2] * MathConstants.DEG_TO_RAD);
     mat4.scale(m, m, part.scale);
+}
+
+class DirectionalLight {
+    @dfShow()
+    @dfRange(-1, 1, 0.01)
+    public dirWorld = vec3.fromValues(-0.4, -0.8, -0.4);
+    @dfRange(0, 2, 0.01)
+    public color = colorNewFromRGBA(0.90 * 2.0, 0.95 * 2.0, 0.95 * 2.0);
+
+    public debugDraw(camera: Camera): void {
+        getMatrixTranslation(scratchVec3a, camera.worldMatrix);
+        getMatrixAxisZ(scratchVec3b, camera.worldMatrix);
+        vec3.scaleAndAdd(scratchVec3a, scratchVec3a, scratchVec3b, -100);
+        const mag = 100;
+        vec3.normalize(scratchVec3b, this.dirWorld);
+        vec3.scaleAndAdd(scratchVec3a, scratchVec3a, scratchVec3b, -mag);
+        drawWorldSpaceVector(getDebugOverlayCanvas2D(), camera.clipFromWorldMatrix, scratchVec3a, scratchVec3b, mag * 2, this.color, 8);
+    }
+
+    public fill(d: Float32Array, offs: number): number {
+        vec3.normalize(scratchVec3b, this.dirWorld);
+        offs += fillVec3v(d, offs, scratchVec3b);
+        offs += fillColor(d, offs, this.color);
+        return 8;
+    }
+}
+
+export class RenderContext {
+    public directionalLight = new DirectionalLight();
+
+    public prepareToRender(viewerInput: Viewer.ViewerRenderInput): void {
+        // this.directionalLight.debugDraw(viewerInput.camera);
+    }
 }
 
 export class MSBRenderer {
@@ -816,16 +902,16 @@ export class MSBRenderer {
         });
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
+    public prepareToRender(renderContext: RenderContext, device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
         const template = renderInstManager.pushTemplateRenderInst();
         template.setBindingLayouts(bindingLayouts);
 
-        const offs = template.allocateUniformBuffer(DKSProgram.ub_SceneParams, 16);
+        const offs = template.allocateUniformBuffer(DKSProgram.ub_SceneParams, 16+4);
         const sceneParamsMapped = template.mapUniformBufferF32(DKSProgram.ub_SceneParams);
         fillSceneParamsData(sceneParamsMapped, viewerInput.camera, offs);
 
         for (let i = 0; i < this.flverInstances.length; i++)
-            this.flverInstances[i].prepareToRender(device, renderInstManager, viewerInput);
+            this.flverInstances[i].prepareToRender(renderContext, device, renderInstManager, viewerInput);
 
         renderInstManager.popTemplateRenderInst();
     }

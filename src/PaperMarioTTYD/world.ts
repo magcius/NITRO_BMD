@@ -18,6 +18,7 @@ import { getPointHermite } from '../Spline';
 import { makeTriangleIndexBuffer, GfxTopology } from '../gfx/helpers/TopologyHelpers';
 import { getSystemEndianness, Endianness } from '../endian';
 import { GXMaterialBuilder } from '../gx/GXMaterialBuilder';
+import { translateCullMode } from '../gx/gx_render';
 
 export interface TTYDWorld {
     information: Information;
@@ -998,13 +999,13 @@ export function parse(buffer: ArrayBufferSlice): TTYDWorld {
                     const totalIndexCount = indexBuffer.length;
                     const indexData = indexBuffer.buffer;
                     const totalVertexCount = vertexCount;
-                    const packet: LoadedVertexDraw = {
+                    const draw: LoadedVertexDraw = {
                         indexOffset: 0, indexCount: totalIndexCount,
-                        posNrmMatrixTable: Array(10).fill(0xFFFF),
+                        posMatrixTable: Array(10).fill(0xFFFF),
                         texMatrixTable: Array(10).fill(0xFFFF),
                     };
                     const vertexBuffers: ArrayBuffer[] = [vertexData];
-                    loadedDatas.push({ indexData, draws: [packet], totalIndexCount, totalVertexCount, vertexBuffers, vertexId, drawCalls: null, dlView: null });
+                    loadedDatas.push({ indexData, draws: [draw], totalIndexCount, totalVertexCount, vertexBuffers, vertexId, drawCalls: null, dlView: null });
                     displayListTableIdx += 0x04;
                 }
 
@@ -1028,7 +1029,7 @@ export function parse(buffer: ArrayBufferSlice): TTYDWorld {
         if (nextSiblingOffs !== 0)
             nextSibling = readSceneGraph(mainDataOffs + nextSiblingOffs);
 
-        const renderFlags: Partial<GfxMegaStateDescriptor> = { cullMode: GX_Material.translateCullMode(cullMode) };
+        const renderFlags: Partial<GfxMegaStateDescriptor> = { cullMode: translateCullMode(cullMode) };
         return { nameStr, typeStr, modelMatrix, bbox, children, parts, isTranslucent, renderFlags, drawModeFlags, collisionFlags, nextSibling };
     }
 

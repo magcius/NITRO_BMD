@@ -1,5 +1,5 @@
 
-import { lerp, saturate, MathConstants, invlerp } from "./MathHelpers";
+import { lerp, saturate, clamp } from "./MathHelpers";
 import { assert } from "./util";
 
 // Color utilities
@@ -56,11 +56,11 @@ export function colorFromHex(c: Color, s: string): void {
     colorFromRGBA(c, r, g, b, a);
 }
 
-export function colorLerp(dst: Color, k0: Color, k1: Color, t: number): void {
-    dst.r = lerp(k0.r, k1.r, t);
-    dst.g = lerp(k0.g, k1.g, t);
-    dst.b = lerp(k0.b, k1.b, t);
-    dst.a = lerp(k0.a, k1.a, t);
+export function colorLerp(dst: Color, a: Color, b: Color, t: number): void {
+    dst.r = lerp(a.r, b.r, t);
+    dst.g = lerp(a.g, b.g, t);
+    dst.b = lerp(a.b, b.b, t);
+    dst.a = lerp(a.a, b.a, t);
 }
 
 export function colorScaleAndAdd(dst: Color, a: Color, b: Color, v: number) {
@@ -84,6 +84,13 @@ export function colorClampLDR(dst: Color, a: Color) {
     dst.a = saturate(a.a);
 }
 
+export function colorClamp(dst: Color, a: Color, min: number, max: number): void {
+    dst.r = clamp(a.r, min, max);
+    dst.g = clamp(a.g, min, max);
+    dst.b = clamp(a.b, min, max);
+    dst.a = clamp(a.a, min, max);
+}
+
 export function colorScale(dst: Color, a: Color, v: number) {
     dst.r = a.r * v;
     dst.g = a.g * v;
@@ -91,11 +98,18 @@ export function colorScale(dst: Color, a: Color, v: number) {
     dst.a = a.a * v;
 }
 
-export function colorMult(dst: Color, k0: Color, k1: Color): void {
-    dst.g = k0.g * k1.g;
-    dst.r = k0.r * k1.r;
-    dst.b = k0.b * k1.b;
-    dst.a = k0.a * k1.a;
+export function colorMult(dst: Color, a: Color, b: Color): void {
+    dst.g = a.g * b.g;
+    dst.r = a.r * b.r;
+    dst.b = a.b * b.b;
+    dst.a = a.a * b.a;
+}
+
+export function colorMultAlpha(dst: Color, src: Color, a: number): void {
+    dst.g = src.g;
+    dst.r = src.r;
+    dst.b = src.b;
+    dst.a = src.a * a;
 }
 
 export function colorFromARGB8(dst: Color, n: number): void {

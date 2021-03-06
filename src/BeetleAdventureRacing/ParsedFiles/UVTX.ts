@@ -9,6 +9,7 @@ import * as RDP from '../../Common/N64/RDP';
 import { vec4, mat4 } from "gl-matrix";
 import { GfxDevice, GfxTexture, GfxSampler, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, makeTextureDescriptor2D, GfxFormat } from "../../gfx/platform/GfxPlatform";
 import { fillVec4v, fillMatrix4x2 } from "../../gfx/helpers/UniformBufferHelpers";
+import { calcTextureMatrixFromRSPState } from "../../Common/N64/RSP";
 
 // TODO: figure out if any mode other than Loop is used
 enum TexScrollAnimMode {
@@ -513,44 +514,22 @@ export class UVTXRenderHelper {
         }
     }
 
+    private static scratchTexMatrix: mat4 = mat4.create();
     private static makeMat(texData: TextureData, scrollAnim: TexScrollAnim | null, tileState: RDP.TileState, scaleS: number, scaleT: number) {
-        let shiftSMult = 1 << tileState.shifts;
-        if(tileState.shifts > 10) {
-            shiftSMult = Math.pow(2, tileState.shifts - 16);
-        }
-
-        let shiftTMult = 1 << tileState.shiftt;
-        if(tileState.shiftt > 10) {
-            shiftTMult = Math.pow(2, tileState.shiftt - 16);
-        }
-
-        // s - uls                                            // Adjust for tile position
-        // (s - uls) / (scaleS * shiftSMult)                  // Adjust for scale & shift
-        // (s - uls) / (scaleS * shiftSMult * texData.width)  // Adjust for modern graphics api coordinate scheme
-        //
-        // all in all ->
-        // s / (scaleS * shiftSMult * texData.width) - uls / (scaleS * shiftSMult * texData.width)
-
-        const sDiv = scaleS * shiftSMult * texData.width;
-        const tDiv = scaleT * shiftTMult * texData.height;
-
-        // TODO: adjust for the 0.5 (see the chandelier in WW to check that you have it right)
-        // TODO: check this logic
-        // TODO: implement mask?
-        let texMatrix = mat4.fromValues(
-            1 / sDiv, 0, 0, 0,
-            0, 1 / tDiv, 0, 0,
-            0, 0, 1, 0,
-            -tileState.uls / sDiv, -tileState.ult / tDiv, 0, 1
-        );
+        calcTextureMatrixFromRSPState(UVTXRenderHelper.scratchTexMatrix, scaleS, scaleT, texData.width, texData.height, tileState.shifts, tileState.shiftt);
 
         if(scrollAnim !== null) {
-            //TODO: is negating them the right thing to do
-            texMatrix[12] = -scrollAnim.sOffset;
-            texMatrix[13] = -scrollAnim.tOffset;
+            let offsetMatrix = mat4.fromValues(
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                -scrollAnim.sOffset, -scrollAnim.tOffset, 0, 1
+            );
+
+            mat4.multiply(UVTXRenderHelper.scratchTexMatrix, offsetMatrix, UVTXRenderHelper.scratchTexMatrix);
         }
 
-        return texMatrix;
+        return UVTXRenderHelper.scratchTexMatrix;
     }
 
     public fillCombineParams(combineParams: Float32Array, combineParamsOffs: number) {
@@ -594,9 +573,8 @@ class TextureData {
         let rspState = uvtx.rspState;
         this.gfxTexture = device.createTexture(makeTextureDescriptor2D(GfxFormat.U8_RGBA_NORM, uvtx.width, uvtx.height, 1));
         //device.setResourceName(this.gfxTexture, texture.name);
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadTextureData(this.gfxTexture, 0, [uvtx.convertedTexelData]);
-        device.submitPass(hostAccessPass);
+
+        device.uploadTextureData(this.gfxTexture, 0, [uvtx.convertedTexelData]);
 
         this.gfxSampler = device.createSampler({
             wrapS: translateCM(rspState.primitiveTile.cms),

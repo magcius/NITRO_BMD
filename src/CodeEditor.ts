@@ -500,9 +500,6 @@ export default class CodeEditor {
         const types = (/\b(void|bool|float|[ui]?vec[234]|mat[234]|mat[234]x[234]|[u]?int|sampler[23]D)\b/g);
         while ((match = types.exec(chars)) !== null)
             syntaxRuns.push({ start: match.index, end: match.index + match[0].length, color: '#6d9cbe' });
-        const strings = (/("[^"]*")|('[^']*')/g);
-        while ((match = strings.exec(chars)) !== null)
-            syntaxRuns.push({ start: match.index, end: match.index + match[0].length, color: '#6d9cbe' });
         const comments = (/\/\/.*$/gm);
         while ((match = comments.exec(chars)) !== null)
             syntaxRuns.push({ start: match.index, end: match.index + match[0].length, color: '#bc9458', style: 'italic' });

@@ -1,20 +1,19 @@
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { assert, readString, nArray } from "../util";
+import { assert, readString, assertExists } from "../util";
 import { vec4, vec3, mat4 } from "gl-matrix";
-import { Color, colorNewFromRGBA, colorNewCopy, TransparentBlack } from "../Color";
+import { Color, colorNewFromRGBA } from "../Color";
 import { unpackColorRGBExp32, BaseMaterial, MaterialProgramBase, LightCache, EntityMaterialParameters } from "./Materials";
 import { SourceRenderContext, SourceEngineView } from "./Main";
 import { GfxInputLayout, GfxVertexAttributeDescriptor, GfxInputLayoutBufferDescriptor, GfxFormat, GfxVertexBufferFrequency, GfxDevice, GfxBuffer, GfxBufferUsage, GfxBufferFrequencyHint, GfxInputState } from "../gfx/platform/GfxPlatform";
 import { computeModelMatrixSRT, transformVec3Mat4w1, MathConstants, getMatrixTranslation } from "../MathHelpers";
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { computeViewSpaceDepthFromWorldSpacePointAndViewMatrix } from "../Camera";
 import { Endianness } from "../endian";
 import { fillColor } from "../gfx/helpers/UniformBufferHelpers";
-import { StudioModelInstance, HardwareVertData } from "./Studio";
-import { computeModelMatrixPosRot } from "./Main";
+import { StudioModelInstance, HardwareVertData, computeModelMatrixPosQAngle } from "./Studio";
 import BitMap from "../BitMap";
-import { BSPFile, computeAmbientCubeFromLeaf } from "./BSPFile";
+import { BSPFile, computeAmbientCubeFromLeaf, newAmbientCube } from "./BSPFile";
 import { AABB } from "../Geometry";
 
 //#region Detail Models
@@ -311,10 +310,8 @@ export class DetailPropLeafRenderer {
         }
 
         const device = renderContext.device;
-        const hostAccessPass = device.createHostAccessPass();
-        hostAccessPass.uploadBufferData(this.vertexBuffer, 0, new Uint8Array(this.vertexData.buffer));
-        hostAccessPass.uploadBufferData(this.indexBuffer, 0, new Uint8Array(this.indexData.buffer));
-        device.submitPass(hostAccessPass);
+        device.uploadBufferData(this.vertexBuffer, 0, new Uint8Array(this.vertexData.buffer));
+        device.uploadBufferData(this.indexBuffer, 0, new Uint8Array(this.indexData.buffer));
 
         const renderInst = renderInstManager.newRenderInst();
         renderInst.setInputLayoutAndState(this.inputLayout, this.inputState);
@@ -431,8 +428,7 @@ export function deserializeGameLump_sprp(buffer: ArrayBufferSlice, version: numb
 
         const index = i;
         const pos = vec3.fromValues(posX, posY, posZ);
-        // This was empirically determined. TODO(jstpierre): Should computeModelMatrixPosRot in general do this?
-        const rot = vec3.fromValues(rotZ, rotX, rotY);
+        const rot = vec3.fromValues(rotX, rotY, rotZ);
         const propName = staticModelDict[propType];
         const propLeafList = leafList.subarray(firstLeaf, firstLeaf + leafCount);
         staticProps.push({ index, pos, rot, flags, skin, propName, leafList: propLeafList, fadeMinDist, fadeMaxDist, lightingOrigin });
@@ -448,28 +444,25 @@ export class StaticPropRenderer {
     private bbox = new AABB();
     private materialParams = new EntityMaterialParameters();
 
-    constructor(renderContext: SourceRenderContext, bsp: BSPFile, private staticProp: StaticProp) {
+    constructor(renderContext: SourceRenderContext, private bsp: BSPFile, private staticProp: StaticProp) {
         this.createInstance(renderContext, bsp);
     }
 
     private async createInstance(renderContext: SourceRenderContext, bsp: BSPFile) {
         const modelData = await renderContext.studioModelCache.fetchStudioModelData(this.staticProp.propName);
+        this.materialParams.ambientCube = newAmbientCube();
 
-        // TODO(jstpierre): studiohdr2_t illumposition
-        const lightingOrigin = this.staticProp.lightingOrigin !== null ? this.staticProp.lightingOrigin : this.staticProp.pos;
-        const leafidx = bsp.findLeafForPoint(lightingOrigin);
-        assert(leafidx >= 0);
-        const leaf = bsp.leaflist[leafidx];
-        const ambientCube = nArray(6, () => colorNewCopy(TransparentBlack));
-        computeAmbientCubeFromLeaf(ambientCube, leaf, lightingOrigin);
-        this.materialParams.ambientCube = ambientCube;
-
-        computeModelMatrixPosRot(scratchMatrix, this.staticProp.pos, this.staticProp.rot);
+        computeModelMatrixPosQAngle(scratchMatrix, this.staticProp.pos, this.staticProp.rot);
         this.bbox.transform(modelData.bbox, scratchMatrix);
 
-        this.materialParams.lightCache = new LightCache(bsp, lightingOrigin, this.bbox);;
+        const lightingOrigin = this.staticProp.lightingOrigin !== null ? this.staticProp.lightingOrigin : this.staticProp.pos;
+        this.materialParams.lightCache = new LightCache(bsp, lightingOrigin, this.bbox);
+
+        const leaf = assertExists(this.bsp.findLeafForPoint(lightingOrigin));
+        computeAmbientCubeFromLeaf(this.materialParams.ambientCube, leaf, lightingOrigin);
 
         this.studioModelInstance = new StudioModelInstance(renderContext, modelData, this.materialParams);
+        this.studioModelInstance.setSkin(renderContext, this.staticProp.skin);
         mat4.copy(this.studioModelInstance.modelMatrix, scratchMatrix);
 
         // Bind static lighting data, if we have it...
@@ -509,6 +502,11 @@ export class StaticPropRenderer {
         if (!visible)
             return;
 
+        if ((this as any).debug)
+            this.materialParams.lightCache!.debugDrawLights(renderContext.currentView);
+
+        computeModelMatrixPosQAngle(this.studioModelInstance.modelMatrix, this.staticProp.pos, this.staticProp.rot);
+
         getMatrixTranslation(this.materialParams.position, this.studioModelInstance.modelMatrix);
         this.studioModelInstance.prepareToRender(renderContext, renderInstManager);
     }
@@ -520,4 +518,4 @@ export class StaticPropRenderer {
             this.colorMeshData.destroy(device);
     }
 }
-////#endregion
+//#endregion

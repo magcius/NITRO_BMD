@@ -28,7 +28,6 @@ export async function captureScene(viewer: Viewer, options: CaptureOptions): Pro
     const fileEntries: ZipFileEntry[] = [];
 
     // This is some ugliness to take over the main code... in an ideal world we'd do this offscreen...
-    window.main.setPaused(true);
     viewer.sceneTime = 0;
     viewer.rafTime = 0;
     for (let i = 0; i < options.frameCount; i++) {
@@ -44,7 +43,6 @@ export async function captureScene(viewer: Viewer, options: CaptureOptions): Pro
         const filename = `${options.filenamePrefix}_${leftPad('' + i, 4)}.png`;
         fileEntries.push({ filename, data });
     }
-    window.main.setPaused(false);
 
     return fileEntries;
 }

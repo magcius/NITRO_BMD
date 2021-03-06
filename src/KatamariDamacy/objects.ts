@@ -3,7 +3,7 @@ import { mat4, vec3, quat, ReadonlyMat4 } from "gl-matrix";
 import { Green, Magenta, Red } from "../Color";
 import { drawWorldSpaceLine, drawWorldSpacePoint, drawWorldSpaceText, getDebugOverlayCanvas2D } from "../DebugJunk";
 import { AABB } from "../Geometry";
-import { GfxRenderInstManager, GfxRendererLayer } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRendererLayer } from "../gfx/render/GfxRenderInstManager";
 import { angleDist, clamp, computeMatrixWithoutTranslation, computeModelMatrixR, float32AsBits, getMatrixAxisY, getMatrixAxisZ, MathConstants, normToLength, setMatrixTranslation, transformVec3Mat4w0, transformVec3Mat4w1, Vec3NegY, Vec3UnitY, getMatrixTranslation, Vec3Zero, Vec3UnitZ, Vec3NegX } from "../MathHelpers";
 import { assert, hexzero, nArray } from "../util";
 import { ViewerRenderInput } from "../viewer";

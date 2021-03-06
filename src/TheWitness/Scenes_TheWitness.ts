@@ -1,19 +1,21 @@
 
 import { SceneGroup, SceneDesc, SceneGfx, ViewerRenderInput } from "../viewer";
-import { GfxDevice, GfxRenderPass, GfxHostAccessPass, GfxBindingLayoutDescriptor, GfxProgram } from "../gfx/platform/GfxPlatform";
+import { GfxDevice, GfxRenderPass, GfxBindingLayoutDescriptor, GfxProgram } from "../gfx/platform/GfxPlatform";
 import { SceneContext } from "../SceneBase";
 import * as ZipFile from '../ZipFile';
 import { Asset_Manager, Asset_Type, Mesh_Asset, Render_Material } from "./Assets";
 import { Entity } from "./Entity";
 import { mat4 } from "gl-matrix";
 import { DeviceProgram } from "../Program";
-import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderer";
-import { BasicRenderTarget, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderTargetHelpers";
-import { GfxRenderHelper } from "../gfx/render/GfxRenderGraph";
+import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
+import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
+import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
 import { fillMatrix4x4, fillVec4v } from "../gfx/helpers/UniformBufferHelpers";
 import { TextureMapping } from "../TextureHolder";
 import { nArray } from "../util";
 import { TheWitnessGlobals } from "./Globals";
+import { GfxShaderLibrary } from "../gfx/helpers/ShaderHelpers";
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from "../gfx/render/GfxRenderGraph";
 
 const pathBase = `TheWitness`;
 
@@ -80,9 +82,7 @@ in vec3 v_TangentSpaceBasis0;
 in vec3 v_TangentSpaceBasis1;
 in vec3 v_TangentSpaceBasis2;
 
-float Saturate(float v) {
-    return clamp(v, 0.0, 1.0);
-}
+${GfxShaderLibrary.saturate}
 
 vec3 UnpackNormalMap(in vec4 t_NormalMapSample) {
     vec3 t_Normal;
@@ -104,7 +104,7 @@ void main() {
     // Compute albedo color from the blend map
     float t_BlendRange = 1.0 / u_BlendRanges.x;
     float t_BlendMapSample = texture(SAMPLER_2D(u_BlendMap[0]), v_TexCoord0).x - v_Color0.a;
-    float t_Blend1 = Saturate((t_BlendMapSample * t_BlendRange) + 0.5);
+    float t_Blend1 = saturate((t_BlendMapSample * t_BlendRange) + 0.5);
     float t_Blend0 = 1.0 - t_Blend1;
 
     if (t_Blend0 >= 0.0)
@@ -204,7 +204,6 @@ const bindingLayouts: GfxBindingLayoutDescriptor[] = [
 ];
 
 class TheWitnessRenderer implements SceneGfx {
-    public renderTarget = new BasicRenderTarget();
     public renderHelper: GfxRenderHelper;
 
     public mesh_instance_array: Mesh_Instance[] = [];
@@ -213,7 +212,7 @@ class TheWitnessRenderer implements SceneGfx {
         this.renderHelper = new GfxRenderHelper(device);
     }
 
-    public prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: ViewerRenderInput): void {
+    public prepareToRender(device: GfxDevice, viewerInput: ViewerRenderInput): void {
         const template = this.renderHelper.pushTemplateRenderInst();
         template.setBindingLayouts(bindingLayouts);
 
@@ -225,20 +224,31 @@ class TheWitnessRenderer implements SceneGfx {
         for (let i = 0; i < this.mesh_instance_array.length; i++)
             this.mesh_instance_array[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: ViewerRenderInput): GfxRenderPass | null {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
+    public render(device: GfxDevice, viewerInput: ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
-        const mainPassRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, standardFullClearRenderPassDescriptor);
-        renderInstManager.drawOnPassRenderer(device, mainPassRenderer);
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);
 
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
 
         /*
@@ -249,12 +259,9 @@ class TheWitnessRenderer implements SceneGfx {
             drawWorldSpacePoint(getDebugOverlayCanvas2D(), scratchMatrix, this.entities[i].position, this.entities[i].debug_color);
         }
         */
-
-        return mainPassRenderer;
     }
 
     public destroy(device: GfxDevice): void {
-        this.renderTarget.destroy(device);
         this.renderHelper.destroy(device);
     }
 }

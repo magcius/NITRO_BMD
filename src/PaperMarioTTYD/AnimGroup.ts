@@ -3,20 +3,21 @@ import ArrayBufferSlice from "../ArrayBufferSlice";
 import { readString, nArray, assert, assertExists, align } from "../util";
 import { GX_VtxDesc, GX_VtxAttrFmt, LoadedVertexLayout, compileVtxLoader, LoadedVertexData, VtxLoader, GX_Array } from "../gx/gx_displaylist";
 import * as GX from "../gx/gx_enum";
-import { mat4 } from "gl-matrix";
-import { GfxDevice, GfxBuffer, GfxBufferUsage, GfxBufferFrequencyHint, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxHostAccessPass } from "../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager, GfxRendererLayer, setSortKeyLayer } from "../gfx/render/GfxRenderer";
+import { mat4, ReadonlyMat4, vec3 } from "gl-matrix";
+import { GfxDevice, GfxBuffer, GfxBufferUsage, GfxBufferFrequencyHint, GfxVertexBufferDescriptor, GfxIndexBufferDescriptor, GfxSampler } from "../gfx/platform/GfxPlatform";
+import { GfxRenderInstManager, GfxRendererLayer, setSortKeyLayer, setSortKeyBias, setSortKeyDepth } from "../gfx/render/GfxRenderInstManager";
 import * as TPL from "./tpl";
-import { BTIData } from "../Common/JSYSTEM/JUTTexture";
+import { BTIData, TEX1_SamplerSub } from "../Common/JSYSTEM/JUTTexture";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
-import { GXShapeHelperGfx, GXMaterialHelperGfx, MaterialParams, PacketParams } from "../gx/gx_render";
+import { GXShapeHelperGfx, GXMaterialHelperGfx, MaterialParams, PacketParams, translateTexFilterGfx, translateWrapModeGfx } from "../gx/gx_render";
 import { ViewerRenderInput } from "../viewer";
 import { GXMaterialBuilder } from "../gx/GXMaterialBuilder";
 import { mapSetMaterialTev } from "./world";
-import { computeModelMatrixS, computeModelMatrixT, MathConstants } from "../MathHelpers";
+import { computeModelMatrixS, computeModelMatrixT, getMatrixTranslation, MathConstants } from "../MathHelpers";
 import BitMap from "../BitMap";
 import { Endianness } from "../endian";
 import { DataFetcher, AbortedCallback } from "../DataFetcher";
+import { computeViewSpaceDepthFromWorldSpacePoint } from "../Camera";
 
 export interface AnimGroup {
     anmFilename: string;
@@ -521,8 +522,25 @@ export class AnimGroupData {
     }
 }
 
+function translateSampler(device: GfxDevice, cache: GfxRenderCache, sampler: TEX1_SamplerSub, wrapS: GX.WrapMode, wrapT: GX.WrapMode): GfxSampler {
+    const [minFilter, mipFilter] = translateTexFilterGfx(sampler.minFilter);
+    const [magFilter]            = translateTexFilterGfx(sampler.magFilter);
+
+    const gfxSampler = cache.createSampler(device, {
+        wrapS: translateWrapModeGfx(wrapS),
+        wrapT: translateWrapModeGfx(wrapT),
+        minFilter, mipFilter, magFilter,
+        minLOD: sampler.minLOD,
+        maxLOD: sampler.maxLOD,
+    });
+
+    return gfxSampler;
+}
+
 const materialParams = new MaterialParams();
 const packetParams = new PacketParams();
+const scratchVec3a = vec3.create();
+
 class AnimGroupInstance_Shape {
     private shapeHelper: GXShapeHelperGfx[];
     private materialHelper: GXMaterialHelperGfx[];
@@ -542,18 +560,16 @@ class AnimGroupInstance_Shape {
         this.vtxBuffer = device.createBuffer(align(vtxByteCount, 4) / 4, GfxBufferUsage.VERTEX, this.animGroupData.animGroup.hasAnyVtxAnm ? GfxBufferFrequencyHint.DYNAMIC : GfxBufferFrequencyHint.STATIC);
         this.idxBuffer = device.createBuffer(align(idxByteCount, 4) / 4, GfxBufferUsage.INDEX, GfxBufferFrequencyHint.STATIC);
 
-        const hostAccessPass = device.createHostAccessPass();
         let vtxByteOffset = 0, idxByteOffset = 0;
         this.shapeHelper = this.shape.draws.map((draw, i) => {
             const vertexBuffer: GfxVertexBufferDescriptor = { buffer: this.vtxBuffer, byteOffset: vtxByteOffset };
             const indexBuffer: GfxIndexBufferDescriptor = { buffer: this.idxBuffer, byteOffset: idxByteOffset };
-            hostAccessPass.uploadBufferData(this.vtxBuffer, vtxByteOffset, new Uint8Array(draw.loadedVertexData.vertexBuffers[0]));
-            hostAccessPass.uploadBufferData(this.idxBuffer, idxByteOffset, new Uint8Array(draw.loadedVertexData.indexData));
+            device.uploadBufferData(this.vtxBuffer, vtxByteOffset, new Uint8Array(draw.loadedVertexData.vertexBuffers[0]));
+            device.uploadBufferData(this.idxBuffer, idxByteOffset, new Uint8Array(draw.loadedVertexData.indexData));
             vtxByteOffset += draw.loadedVertexData.vertexBuffers[0].byteLength;
             idxByteOffset += draw.loadedVertexData.indexData.byteLength;
             return new GXShapeHelperGfx(device, cache, [vertexBuffer], indexBuffer, draw.loadedVertexLayout, draw.loadedVertexData);
         });
-        device.submitPass(hostAccessPass);
 
         this.materialHelper = this.shape.draws.map((draw, idx) => {
             const mb = new GXMaterialBuilder();
@@ -564,6 +580,7 @@ class AnimGroupInstance_Shape {
                 mb.setTexCoordGen(GX.TexCoordID.TEXCOORD0 + i, GX.TexGenType.MTX2x4, GX.TexGenSrc.TEX0 + i, GX.TexGenMatrix.TEXMTX0 + i * 3);
 
             mapSetMaterialTev(mb, draw.texId.length, draw.tevMode);
+            mb.setChanCtrl(GX.ColorChannelID.ALPHA0, false, GX.ColorSrc.REG, GX.ColorSrc.VTX, 0, GX.DiffuseFunction.CLAMP, GX.AttenuationFunction.NONE);
 
             if (this.shape.dispMode === 0 || this.shape.dispMode === 2) {
                 mb.setBlendMode(GX.BlendMode.NONE, GX.BlendFactor.ONE, GX.BlendFactor.ZERO);
@@ -591,7 +608,7 @@ class AnimGroupInstance_Shape {
         });
     }
 
-    public runAndUploadVertexData(animVtxPos: ArrayBufferSlice, animVtxNrm: ArrayBufferSlice, hostAccessPass: GfxHostAccessPass): void {
+    public runAndUploadVertexData(device: GfxDevice, animVtxPos: ArrayBufferSlice, animVtxNrm: ArrayBufferSlice): void {
         const vtxArrays = this.shape.vtxArrays.slice();
         vtxArrays[GX.Attr.POS].buffer = animVtxPos;
         vtxArrays[GX.Attr.NRM].buffer = animVtxNrm;
@@ -600,15 +617,21 @@ class AnimGroupInstance_Shape {
         let vtxByteOffset = 0;
         for (let i = 0; i < this.shape.draws.length; i++) {
             const draw = this.shape.draws[i];
-            hostAccessPass.uploadBufferData(this.vtxBuffer, vtxByteOffset, new Uint8Array(draw.loadedVertexData.vertexBuffers[0]));
+            device.uploadBufferData(this.vtxBuffer, vtxByteOffset, new Uint8Array(draw.loadedVertexData.vertexBuffers[0]));
             vtxByteOffset += draw.loadedVertexData.vertexBuffers[0].byteLength;
         }
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput, texMtxs: AnimGroup_TexMtx[], modelMatrix: mat4): void {
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput, texMtxs: AnimGroup_TexMtx[], modelMatrix: ReadonlyMat4): void {
         if (!this.visible)
             return;
 
+        const template = renderInstManager.pushTemplateRenderInst();
+
+        getMatrixTranslation(scratchVec3a, modelMatrix);
+        const depth = computeViewSpaceDepthFromWorldSpacePoint(viewerInput.camera, scratchVec3a);
+        template.sortKey = setSortKeyDepth(template.sortKey, depth);
+    
         for (let i = 0; i < this.shape.draws.length; i++) {
             const draw = this.shape.draws[i];
             const shapeHelper = this.shapeHelper[i];
@@ -620,7 +643,6 @@ class AnimGroupInstance_Shape {
 
             mat4.mul(packetParams.u_PosMtx[0], viewerInput.camera.viewMatrix, modelMatrix);
             materialHelper.allocatePacketParamsDataOnInst(renderInst, packetParams);
-            materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams);
 
             for (let j = 0; j < draw.texId.length; j++) {
                 const texId = draw.texId[j];
@@ -632,12 +654,22 @@ class AnimGroupInstance_Shape {
 
                 computeTexMatrix(materialParams.u_TexMtx[j], texMtx);
                 this.animGroupData.textureData[texArcIdx].fillTextureMapping(materialParams.m_TextureMapping[j]);
+
+                if (texBase.wrapFlags >= 0) {
+                    const wrapS = !!(texBase.wrapFlags & 0x04) ? GX.WrapMode.MIRROR : !!(texBase.wrapFlags & 0x01) ? GX.WrapMode.REPEAT : GX.WrapMode.CLAMP;
+                    const wrapT = !!(texBase.wrapFlags & 0x08) ? GX.WrapMode.MIRROR : !!(texBase.wrapFlags & 0x02) ? GX.WrapMode.REPEAT : GX.WrapMode.CLAMP;
+                    materialParams.m_TextureMapping[j].gfxSampler = translateSampler(device, renderInstManager.gfxRenderCache, this.animGroupData.textureData[texArcIdx].btiTexture, wrapS, wrapT);
+                }
             }
+
+            materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams);
             renderInst.setSamplerBindingsFromTextureMappings(materialParams.m_TextureMapping);
             renderInst.sortKey = setSortKeyLayer(renderInst.sortKey, this.renderLayers[i]);
 
             renderInstManager.submitRenderInst(renderInst);
         }
+
+        renderInstManager.popTemplateRenderInst();
     }
 
     public destroy(device: GfxDevice): void {
@@ -913,9 +945,7 @@ export class AnimGroupInstance {
                 const shape = this.shapes[group.shapeIdx];
 
                 if (this.anim !== null && this.anim.hasVtxAnm) {
-                    const hostAccessPass = device.createHostAccessPass();
-                    shape.runAndUploadVertexData(this.animVtxPos!, this.animVtxNrm!, hostAccessPass);
-                    device.submitPass(hostAccessPass);
+                    shape.runAndUploadVertexData(device, this.animVtxPos!, this.animVtxNrm!);
                 }
 
                 shape.prepareToRender(device, renderInstManager, viewerInput, this.animTexMtx, m);

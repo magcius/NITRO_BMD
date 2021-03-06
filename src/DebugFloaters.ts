@@ -335,6 +335,8 @@ export class DebugFloaterHolder {
 
             if (typeof v === "number")
                 panel.bindSingleSlider(`${parentName}.${keyName}`, obj, keyName, parentMetadata, this.midiControls);
+            else if (typeof v === "boolean")
+                panel.bindCheckbox(`${parentName}.${keyName}`, obj, keyName);;
 
             this._bindSlidersRecurse(v, panel, `${parentName}.${keyName}`, getParentMetadata(obj, keyName));
         }

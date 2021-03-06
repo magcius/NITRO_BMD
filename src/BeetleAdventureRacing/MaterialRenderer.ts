@@ -3,7 +3,7 @@ import { mat4, vec3 } from "gl-matrix";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers";
 import { fillMatrix4x4, fillMatrix4x3 } from "../gfx/helpers/UniformBufferHelpers";
 import { GfxBuffer, GfxBufferUsage, GfxDevice, GfxFormat, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxInputState, GfxVertexAttributeDescriptor, GfxVertexBufferFrequency, GfxMegaStateDescriptor, GfxCullMode } from "../gfx/platform/GfxPlatform";
-import { GfxRendererLayer, GfxRenderInstManager, makeSortKey, setSortKeyDepth } from "../gfx/render/GfxRenderer";
+import { GfxRendererLayer, GfxRenderInstManager, makeSortKey, setSortKeyDepth } from "../gfx/render/GfxRenderInstManager";
 import { DeviceProgram } from "../Program";
 import { ViewerRenderInput } from "../viewer";
 import { UVTX, UVTXRenderHelper } from "./ParsedFiles/UVTX";

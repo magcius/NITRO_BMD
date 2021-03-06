@@ -13,7 +13,7 @@ import { getVertexInputLocation } from "../../gx/gx_material";
 import * as GX from "../../gx/gx_enum";
 import { GXMaterialHelperGfx } from "../../gx/gx_render";
 import { MaterialParams, PacketParams, ColorKind } from "../../gx/gx_render";
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../../gfx/render/GfxRenderInstManager";
 import { DrawType, NameObj, MovementType } from "../NameObj";
 import { LiveActor, ZoneAndLayer } from "../LiveActor";
 import { GfxRenderCache } from "../../gfx/render/GfxRenderCache";
@@ -335,7 +335,6 @@ export class OceanBowl extends LiveActor {
         const device = sceneObjHolder.modelCache.device;
         const cache = sceneObjHolder.modelCache.cache;
 
-        const hostAccessPass = device.createHostAccessPass();
         for (let i = 0; i < this.points.length; i++) {
             const p = this.points[i];
             let offs = i * 3;
@@ -343,8 +342,7 @@ export class OceanBowl extends LiveActor {
             this.positionDataF32[offs++] = p.drawPosition[1];
             this.positionDataF32[offs++] = p.drawPosition[2];
         }
-        hostAccessPass.uploadBufferData(this.positionBuffer, 0, this.positionDataU8);
-        device.submitPass(hostAccessPass);
+        device.uploadBufferData(this.positionBuffer, 0, this.positionDataU8);
 
         // Fill in our material params.
         this.water.fillTextureMapping(materialParams.m_TextureMapping[0]);

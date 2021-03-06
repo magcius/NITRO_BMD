@@ -13,6 +13,7 @@ import * as Scenes_SuperMarioGalaxy1 from './SuperMarioGalaxy/Scenes_SuperMarioG
 import * as Scenes_SuperMarioGalaxy2 from './SuperMarioGalaxy/Scenes_SuperMarioGalaxy2';
 import * as Scenes_SuperMario64DS from './SuperMario64DS/scenes';
 import * as Scenes_Zelda_OcarinaOfTime from './zelview/scenes';
+import * as Scenes_Zelda_OcarinaOfTime_Beta from './zelview/scenes_beta';
 import * as Scenes_Zelda_OcarinaOfTime3D from './oot3d/oot3d_scenes';
 import * as Scenes_Zelda_MajorasMask3D from './oot3d/mm3d_scenes';
 import * as Scenes_LuigisMansion3D from './oot3d/lm3d_scenes';
@@ -40,7 +41,8 @@ import * as Scenes_Okami from './rres/Scenes_Okami';
 import * as Scenes_SonicColors from './rres/Scenes_SonicColors';
 import * as Scenes_SuperSmashBrosBrawl from './rres/Scenes_SuperSmashBrosBrawl';
 import * as Scenes_Test from './Scenes_Test';
-import * as Scenes_WiiSportsResort from './rres/Scenes_WiiSportsResort';
+import * as Scenes_WiiSports from './WiiSports/Scenes_WiiSports';
+import * as Scenes_WiiSportsResort from './WiiSports/Scenes_WiiSportsResort';
 import * as Scenes_Zelda_SkywardSword from './rres/Scenes_Zelda_SkywardSword';
 import * as Scenes_InteractiveExamples from './InteractiveExamples/Scenes';
 import * as Scenes_Pilotwings64 from './Pilotwings64/Scenes';
@@ -64,6 +66,7 @@ import * as Scenes_Portal from './SourceEngine/Scenes_Portal';
 import * as Scenes_BeetleAdventureRacing from './BeetleAdventureRacing/Scenes';
 import * as Scenes_TheWitness from './TheWitness/Scenes_TheWitness';
 import * as Scenes_FFX from './FinalFantasyX/scenes';
+import * as Scenes_WiiBanner from './Common/NW4R/lyt/Scenes_WiiBanner';
 
 import { DroppedFileSceneDesc, traverseFileSystemDataTransfer } from './Scenes_FileDrops';
 
@@ -76,7 +79,7 @@ import { mat4 } from 'gl-matrix';
 import { GlobalSaveManager, SaveStateLocation } from './SaveManager';
 import { RenderStatistics } from './RenderStatistics';
 import { Color } from './Color';
-import { standardFullClearRenderPassDescriptor } from './gfx/helpers/RenderTargetHelpers';
+import { standardFullClearRenderPassDescriptor } from './gfx/helpers/RenderGraphHelpers';
 
 import * as Sentry from '@sentry/browser';
 import { GIT_REVISION, IS_DEVELOPMENT } from './BuildVersion';
@@ -99,6 +102,7 @@ const sceneGroups = [
     Scenes_SuperMarioGalaxy2.sceneGroup,
     Scenes_SuperPaperMario.sceneGroup,
     Scenes_SuperSmashBrosBrawl.sceneGroup,
+    Scenes_WiiSports.sceneGroup,
     Scenes_WiiSportsResort.sceneGroup,
     "GameCube",
     Scenes_LuigisMansion.sceneGroup,
@@ -107,22 +111,31 @@ const sceneGroups = [
     Scenes_MetroidPrime.sceneGroupMP2,
     Scenes_PaperMario_TheThousandYearDoor.sceneGroup,
     Scenes_Pikmin2.sceneGroup,
+    Scenes_StarFoxAdventures.sceneGroup,
     Scenes_SuperMarioSunshine.sceneGroup,
     Scenes_Zelda_TwilightPrincess.sceneGroup,
     Scenes_Zelda_TheWindWaker.sceneGroup,
     "Nintendo 3DS",
+    Scenes_LuigisMansion3D.sceneGroup,
     Scenes_Zelda_MajorasMask3D.sceneGroup,
     Scenes_Zelda_OcarinaOfTime3D.sceneGroup,
     "Nintendo DS",
     Scenes_MarioKartDS.sceneGroup,
+    Scenes_MetroidPrimeHunters.sceneGroup,
     Scenes_NewSuperMarioBrosDS.sceneGroup,
+    Scenes_PokemonPlatinum.sceneGroup,
+    Scenes_PokemonHGSS.sceneGroup,
     Scenes_SuperMario64DS.sceneGroup,
     "Nintendo 64",
     Scenes_BanjoKazooie.sceneGroup,
+    Scenes_BanjoTooie.sceneGroup,
+    Scenes_BeetleAdventureRacing.sceneGroup,
     Scenes_PaperMario64.sceneGroup,
     Scenes_Pilotwings64.sceneGroup,
     Scenes_PokemonSnap.sceneGroup,
+    Scenes_Zelda_OcarinaOfTime.sceneGroup,
     "PlayStation 2",
+    Scenes_FFX.sceneGroup,
     Scenes_GTA.sceneGroup.iii,
     Scenes_KatamariDamacy.sceneGroup,
     Scenes_KingdomHearts.sceneGroup,
@@ -130,39 +143,32 @@ const sceneGroups = [
     "Xbox",
     Scenes_SpongeBobBFBB.sceneGroup,
     "PC",
-    Scenes_HalfLife2.sceneGroup,
-    Scenes_Portal.sceneGroup,
-    "Experimental",
-    Scenes_BanjoTooie.sceneGroup,
-    Scenes_BeetleAdventureRacing.sceneGroup,
     Scenes_DarkSouls.sceneGroup,
     Scenes_DarkSoulsCollision.sceneGroup,
+    Scenes_Fez.sceneGroup,
+    Scenes_HalfLife2.sceneGroup,
+    Scenes_TeamFortress2.sceneGroup,
+    Scenes_Portal.sceneGroup,
+    "Experimental",
     Scenes_DonkeyKong64.sceneGroup,
     Scenes_DonkeyKongCountryReturns.sceneGroup,
     Scenes_Elebits.sceneGroup,
-    Scenes_Fez.sceneGroup,
-    Scenes_FFX.sceneGroup,
     Scenes_GTA.sceneGroup.vc,
     Scenes_GTA.sceneGroup.sa,
-    Scenes_LuigisMansion3D.sceneGroup,
     Scenes_MarioAndSonicAtThe2012OlympicGames.sceneGroup,
     Scenes_MetroidPrime.sceneGroupMP3,
-    Scenes_MetroidPrimeHunters.sceneGroup,
-    Scenes_PokemonPlatinum.sceneGroup,
-    Scenes_PokemonHGSS.sceneGroup,
     Scenes_Psychonauts.sceneGroup,
     Scenes_SonicColors.sceneGroup,
-    Scenes_StarFoxAdventures.sceneGroup,
     Scenes_SuperMarioOdyssey.sceneGroup,
     Scenes_SuperSmashBrosMelee.sceneGroup,
     Scenes_WiiUTransferTool.sceneGroup,
-    Scenes_Zelda_OcarinaOfTime.sceneGroup,
     Scenes_GoldenEye007.sceneGroup,
     Scenes_Test.sceneGroup,
     Scenes_InteractiveExamples.sceneGroup,
     Scenes_SunshineWater.sceneGroup,
-    Scenes_TeamFortress2.sceneGroup,
     Scenes_TheWitness.sceneGroup,
+    Scenes_WiiBanner.sceneGroup,
+    Scenes_Zelda_OcarinaOfTime_Beta.sceneGroup,
 ];
 
 function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
@@ -221,7 +227,6 @@ class Main {
     public groups: (string | SceneGroup)[];
     public ui: UI;
     public saveManager = GlobalSaveManager;
-    public paused: boolean = false;
 
     private droppedFileGroup: SceneGroup;
 
@@ -420,10 +425,6 @@ class Main {
         }
     }
 
-    public setPaused(v: boolean): void {
-        this.paused = v;
-    }
-
     private _onPostAnimFrameUpdate = (updateInfo: ViewerUpdateInfo): void => {
         this.checkKeyShortcuts();
 
@@ -485,7 +486,7 @@ class Main {
 
         // TODO(jstpierre): Pass DataView into serializeSaveState
         if (this.viewer.scene !== null && this.viewer.scene.serializeSaveState)
-            byteOffs = this.viewer.scene.serializeSaveState(this._saveStateTmp.buffer, byteOffs);
+            byteOffs = this.viewer.scene.serializeSaveState(this._saveStateTmp.buffer as ArrayBuffer, byteOffs);
 
         const s = btoa(this._saveStateTmp, byteOffs);
         return `ShareData=${s}`;
@@ -499,7 +500,7 @@ class Main {
         byteOffs += 0x04;
         byteOffs += deserializeCamera(this.viewer.camera, this._saveStateView, byteOffs);
         if (this.viewer.scene !== null && this.viewer.scene.deserializeSaveState)
-            byteOffs = this.viewer.scene.deserializeSaveState(this._saveStateTmp.buffer, byteOffs, byteLength);
+            byteOffs = this.viewer.scene.deserializeSaveState(this._saveStateTmp.buffer as ArrayBuffer, byteOffs, byteLength);
 
         if (this.viewer.cameraController !== null)
             this.viewer.cameraController.cameraUpdateForced();
@@ -517,7 +518,7 @@ class Main {
 
         byteOffs += deserializeCamera(this.viewer.camera, this._saveStateView, byteOffs);
         if (this.viewer.scene !== null && this.viewer.scene.deserializeSaveState)
-            byteOffs = this.viewer.scene.deserializeSaveState(this._saveStateTmp.buffer, byteOffs, byteLength);
+            byteOffs = this.viewer.scene.deserializeSaveState(this._saveStateTmp.buffer as ArrayBuffer, byteOffs, byteLength);
 
         if (this.viewer.cameraController !== null)
             this.viewer.cameraController.cameraUpdateForced();
@@ -762,13 +763,6 @@ class Main {
 
         const sceneDescId = this._getCurrentSceneDescId()!;
 
-        if (typeof gtag !== 'undefined') {
-            gtag("event", "loadScene", {
-                'event_category': "Scenes",
-                'event_label': sceneDescId,
-            });
-        }
-
         Sentry.addBreadcrumb({
             category: 'loadScene',
             message: sceneDescId,
@@ -819,16 +813,13 @@ class Main {
 
     // Hooks for people who want to mess with stuff.
     public getStandardClearColor(): Color {
-        return standardFullClearRenderPassDescriptor.colorClearColor;
+        return standardFullClearRenderPassDescriptor.colorClearColor as Color;
     }
 
     public get scene() {
         return this.viewer.scene;
     }
 }
-
-// Google Analytics
-declare var gtag: (command: string, eventName: string, eventParameters: { [key: string]: string }) => void;
 
 // Declare a "main" object for easy access.
 declare global {

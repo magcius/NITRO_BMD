@@ -1,17 +1,16 @@
 
-import { mat4, vec3, quat } from "gl-matrix";
+import { mat4, vec3 } from "gl-matrix";
 
 import { assertExists, nullify, assert, nArray } from "../util";
-import { quatFromEulerRadians, setMatrixTranslation } from "../MathHelpers";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 
 import { J3DModelInstance, J3DModelData, JointMatrixCalc, ShapeInstanceState } from "../Common/JSYSTEM/J3D/J3DGraphBase";
 import { AnimationBase, VAF1, TRK1, TTK1, TPT1, ANK1, LoopMode, Joint, JointTransformInfo, J3DLoadFlags } from "../Common/JSYSTEM/J3D/J3DLoader";
-import { J3DFrameCtrl, VAF1_getVisibility, entryTevRegAnimator, removeTevRegAnimator, entryTexMtxAnimator, removeTexMtxAnimator, entryTexNoAnimator, removeTexNoAnimator, J3DFrameCtrl__UpdateFlags, calcJointAnimationTransform, calcJointMatrixMayaSSC } from "../Common/JSYSTEM/J3D/J3DGraphAnimator";
+import { J3DFrameCtrl, VAF1_getVisibility, entryTevRegAnimator, removeTevRegAnimator, entryTexMtxAnimator, removeTexMtxAnimator, entryTexNoAnimator, removeTexNoAnimator, J3DFrameCtrl__UpdateFlags, calcANK1JointAnimationTransform, calcJointMatrixFromTransform } from "../Common/JSYSTEM/J3D/J3DGraphAnimator";
 
 import { JMapInfoIter, createCsvParser } from "./JMapInfo";
-import { ResTable } from "./Main";
 import { getEaseInOutValue } from "./ActorUtil";
+import { ResTable } from "./LiveActor";
 
 export class BckCtrlData {
     public Name: string = '';
@@ -113,7 +112,7 @@ function reflectBckCtrlData(bckCtrlData: BckCtrlData, xanimePlayer: XanimePlayer
 }
 
 export function getRes<T>(table: ResTable<T>, name: string): T | null {
-    return nullify(table.get(name.toLowerCase()));
+    return nullify<T>(table.get(name.toLowerCase()));
 }
 
 export abstract class AnmPlayerBase<T extends AnimationBase> {
@@ -163,21 +162,9 @@ export abstract class AnmPlayerBase<T extends AnimationBase> {
     }
 }
 
-class XjointTransform {
-    public scale = vec3.create();
-    public translation = vec3.create();
-    public rotation = quat.create();
-
-    public copy(other: XjointTransform): void {
-        vec3.copy(this.scale, other.scale);
-        vec3.copy(this.translation, other.translation);
-        quat.copy(this.rotation, other.rotation);
-    }
-}
-
 class XjointInfo {
-    public xformFrozen = new XjointTransform();
-    public xformAnm = new XjointTransform();
+    public xformFrozen = new JointTransformInfo();
+    public xformAnm = new JointTransformInfo();
 }
 
 export class XanimeFrameCtrl extends J3DFrameCtrl {
@@ -185,12 +172,10 @@ export class XanimeFrameCtrl extends J3DFrameCtrl {
 }
 
 // We only emulate simple mode, which contains one track.
-const scratchVec3a = vec3.create();
-const scratchVec3b = vec3.create();
-const scratchQuat = quat.create();
 const scratchTransform = new JointTransformInfo();
 export class XanimeCore implements JointMatrixCalc {
     public curAnmTime = 0.0;
+    public curAnmTime1 = 0.0;
     public interpoleRatio = 0.0;
     public isFrozen: boolean = false;
     public updateFrozenJoints: boolean = false;
@@ -208,10 +193,7 @@ export class XanimeCore implements JointMatrixCalc {
             const src = jnt1[i].transform;
             const dst = this.joints[i];
 
-            vec3.copy(dst.xformFrozen.translation, src.translation);
-            vec3.copy(dst.xformFrozen.scale, src.scale);
-            quatFromEulerRadians(dst.xformFrozen.rotation, src.rotation[0], src.rotation[1], src.rotation[2]);
-
+            dst.xformFrozen.copy(src);
             dst.xformAnm.copy(dst.xformFrozen);
         }
     }
@@ -236,52 +218,29 @@ export class XanimeCore implements JointMatrixCalc {
 
         if (this.ank1 !== null) {
             const entry = this.ank1.jointAnimationEntries[i];
-            const animFrame = this.curAnmTime * this.ank1.duration;
 
-            calcJointAnimationTransform(scratchTransform, entry, animFrame);
-
-            const anmScale = scratchVec3a;
-            const anmTrans = scratchVec3b;
-            const anmRot = scratchQuat;
-            vec3.copy(anmScale, scratchTransform.scale);
-            vec3.copy(anmTrans, scratchTransform.translation);
-            quatFromEulerRadians(anmRot, scratchTransform.rotation[0], scratchTransform.rotation[1], scratchTransform.rotation[2]);
+            calcANK1JointAnimationTransform(scratchTransform, entry, this.curAnmTime, this.curAnmTime1);
 
             if (this.updateFrozenJoints)
                 xj.xformFrozen.copy(xj.xformAnm);
 
-            if (this.interpoleRatio < 1.0) {
-                vec3.lerp(anmScale, xj.xformFrozen.scale, anmScale, this.interpoleRatio);
-                vec3.lerp(anmTrans, xj.xformFrozen.translation, anmTrans, this.interpoleRatio);
-                quat.slerp(anmRot, xj.xformFrozen.rotation, anmRot, this.interpoleRatio);
-            }
-
-            vec3.copy(xj.xformAnm.scale, anmScale);
-            vec3.copy(xj.xformAnm.translation, anmTrans);
-            quat.copy(xj.xformAnm.rotation, anmRot);
+            if (this.interpoleRatio < 1.0)
+                xj.xformAnm.lerp(xj.xformFrozen, scratchTransform, this.interpoleRatio);
+            else
+                xj.xformAnm.copy(scratchTransform);
         }
     }
 
     private calcScaleBlendBasic(dst: mat4, xj: XjointInfo, jnt1: Joint, shapeInstanceState: ShapeInstanceState): void {
         const transform = xj.xformAnm;
-
-        mat4.fromQuat(dst, transform.rotation);
-        setMatrixTranslation(dst, transform.translation);
-        mat4.scale(dst, dst, transform.scale);
+        calcJointMatrixFromTransform(dst, transform, this.matrixCalcFlag, jnt1, shapeInstanceState);
 
         // vec3.mul(shapeInstanceState.currentScale, shapeInstanceState.currentScale, transform.scale);
     }
 
     private calcScaleBlendMayaNoTransform(dst: mat4, xj: XjointInfo, jnt1: Joint, shapeInstanceState: ShapeInstanceState): void {
         const transform = xj.xformAnm;
-
-        mat4.fromQuat(dst, transform.rotation);
-        setMatrixTranslation(dst, transform.translation);
-        mat4.scale(dst, dst, transform.scale);
-
-        if (!!(jnt1.calcFlags & 0x01))
-            calcJointMatrixMayaSSC(dst, shapeInstanceState.parentScale);
-
+        calcJointMatrixFromTransform(dst, transform, this.matrixCalcFlag, jnt1, shapeInstanceState);
         vec3.copy(shapeInstanceState.parentScale, transform.scale);
     }
 
@@ -356,9 +315,8 @@ export class XanimePlayer {
 
     public calcAnm(): void {
         if (this.currentRes !== null) {
-            const duration = this.currentRes.duration !== 0 ? this.currentRes.duration : 1;
-            const currentTimeInFrames = this.updatedFrameCtrl ? this.oldTimeInFrames : this.frameCtrl.currentTimeInFrames;
-            this.core.curAnmTime = currentTimeInFrames / duration;
+            this.core.curAnmTime = this.updatedFrameCtrl ? this.oldTimeInFrames : this.frameCtrl.currentTimeInFrames;
+            this.core.curAnmTime1 = this.frameCtrl.applyLoopMode(this.core.curAnmTime + 1);
         }
 
         this.core.updateFrame();

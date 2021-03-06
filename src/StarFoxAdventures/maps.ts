@@ -1,20 +1,21 @@
 import * as Viewer from '../viewer';
-import { GfxRenderInstManager } from "../gfx/render/GfxRenderer";
+import { DataFetcher } from '../DataFetcher';
+import { GfxRenderInstList, GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager";
 import { fillSceneParamsDataOnTemplate } from '../gx/gx_render';
 import { GfxDevice } from '../gfx/platform/GfxPlatform';
 import { SceneContext } from '../SceneBase';
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4 } from 'gl-matrix';
 import { nArray } from '../util';
+import { White } from '../Color';
+import { GfxrAttachmentSlot, GfxrGraphBuilder } from '../gfx/render/GfxRenderGraph';
 
-import { SFARenderer, SceneRenderContext } from './render';
+import { SFARenderer, SceneRenderContext, SFARenderLists } from './render';
 import { BlockFetcher, SFABlockFetcher, SwapcircleBlockFetcher, AncientBlockFetcher } from './blocks';
 import { SFA_GAME_INFO, SFADEMO_GAME_INFO, GameInfo } from './scenes';
 import { MaterialFactory } from './materials';
 import { SFAAnimationController } from './animation';
-import { DataFetcher } from '../DataFetcher';
 import { SFATextureFetcher } from './textures';
 import { ModelRenderContext, ModelInstance } from './models';
-import { White } from '../Color';
 
 export interface BlockInfo {
     mod: number;
@@ -144,11 +145,11 @@ export class MapInstance {
         return block;
     }
 
-    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, modelCtx: ModelRenderContext) {
+    public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, modelCtx: ModelRenderContext) {
         for (let b of this.iterateBlocks()) {
             mat4.fromTranslation(scratchMtx0, [640 * b.x, 0, 640 * b.z]);
             mat4.mul(scratchMtx0, this.matrix, scratchMtx0);
-            b.block.prepareToRender(device, renderInstManager, modelCtx, scratchMtx0);
+            b.block.prepareToRender(device, renderInstManager, modelCtx, renderLists, scratchMtx0);
         }
     }
 
@@ -221,8 +222,11 @@ class MapSceneRenderer extends SFARenderer {
         super.update(viewerInput);
         this.materialFactory.update(this.animController);
     }
-    
-    protected renderWorld(device: GfxDevice, renderInstManager: GfxRenderInstManager, sceneCtx: SceneRenderContext) {
+
+    protected addWorldRenderInsts(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, sceneCtx: SceneRenderContext) {
+        const template = renderInstManager.pushTemplateRenderInst();
+        fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
+
         const modelCtx: ModelRenderContext = {
             sceneCtx,
             showDevGeometry: false,
@@ -230,9 +234,9 @@ class MapSceneRenderer extends SFARenderer {
             setupLights: () => {},
         };
 
-        this.beginPass(sceneCtx.viewerInput);
-        this.map.prepareToRender(device, renderInstManager, modelCtx);
-        this.endPass(device);    
+        this.map.prepareToRender(device, renderInstManager, renderLists, modelCtx);
+
+        renderInstManager.popTemplateRenderInst();
     }
 }
 
@@ -285,7 +289,7 @@ export class SwapcircleSceneDesc implements Viewer.SceneDesc {
         const mapRenderer = new MapSceneRenderer(device, animController, materialFactory);
         const texFetcher = await SFATextureFetcher.create(this.gameInfo, context.dataFetcher, true);
         await texFetcher.loadSubdirs(['swapcircle'], context.dataFetcher);
-        const blockFetcher = await SwapcircleBlockFetcher.create(this.gameInfo,context.dataFetcher, device, materialFactory, animController, texFetcher);
+        const blockFetcher = await SwapcircleBlockFetcher.create(this.gameInfo,context.dataFetcher, materialFactory, texFetcher);
         await mapRenderer.create(mapSceneInfo, this.gameInfo, context.dataFetcher, blockFetcher);
 
         // Rotate camera 135 degrees to more reliably produce a good view of the map
@@ -311,7 +315,7 @@ export class AncientMapSceneDesc implements Viewer.SceneDesc {
 
         const animController = new SFAAnimationController();
         const materialFactory = new MaterialFactory(device);
-        const mapsJsonString = new TextDecoder('utf-8').decode(mapsJsonBuffer.arrayBuffer);
+        const mapsJsonString = new TextDecoder('utf-8').decode(mapsJsonBuffer.arrayBuffer as ArrayBuffer);
         const mapsJson = JSON.parse(mapsJsonString);
         const map = mapsJson[this.mapKey];
 
@@ -345,7 +349,7 @@ export class AncientMapSceneDesc implements Viewer.SceneDesc {
         };
 
         const mapRenderer = new MapSceneRenderer(device, animController, materialFactory);
-        const blockFetcher = await AncientBlockFetcher.create(this.gameInfo, dataFetcher, device, materialFactory, animController);
+        const blockFetcher = await AncientBlockFetcher.create(this.gameInfo, dataFetcher, materialFactory);
         await mapRenderer.create(mapSceneInfo, this.gameInfo, dataFetcher, blockFetcher);
 
         // Rotate camera 135 degrees to more reliably produce a good view of the map

@@ -17,10 +17,10 @@ interface AreaFormBase {
 }
 
 export const enum AreaFormType {
-    Cube,
-    CubeGround,
+    CenterOriginCube,
+    BaseOriginCube,
     Sphere,
-    Cylinder,
+    BaseOriginCylinder,
     Bowl,
 }
 
@@ -58,7 +58,7 @@ class AreaFormCube implements AreaFormBase {
         this.aabb.maxY =  0.5 * scratchVec3a[1] * 1000;
         this.aabb.maxZ =  0.5 * scratchVec3a[2] * 1000;
 
-        if (type === AreaFormType.CubeGround) {
+        if (type === AreaFormType.BaseOriginCube) {
             this.aabb.minY += 0.5 * scratchVec3a[1] * 1000;
             this.aabb.maxY += 0.5 * scratchVec3a[1] * 1000;
         }
@@ -194,13 +194,13 @@ export class AreaObj extends NameObj {
     constructor(private zoneAndLayer: ZoneAndLayer, sceneObjHolder: SceneObjHolder, infoIter: JMapInfoIter, formType: AreaFormType) {
         super(sceneObjHolder, getObjectName(infoIter));
 
-        if (formType === AreaFormType.Cube)
-            this.form = new AreaFormCube(sceneObjHolder, infoIter, AreaFormType.Cube);
-        else if (formType === AreaFormType.CubeGround)
-            this.form = new AreaFormCube(sceneObjHolder, infoIter, AreaFormType.CubeGround);
+        if (formType === AreaFormType.CenterOriginCube)
+            this.form = new AreaFormCube(sceneObjHolder, infoIter, AreaFormType.CenterOriginCube);
+        else if (formType === AreaFormType.BaseOriginCube)
+            this.form = new AreaFormCube(sceneObjHolder, infoIter, AreaFormType.BaseOriginCube);
         else if (formType === AreaFormType.Sphere)
             this.form = new AreaFormSphere(sceneObjHolder, infoIter);
-        else if (formType === AreaFormType.Cylinder)
+        else if (formType === AreaFormType.BaseOriginCylinder)
             this.form = new AreaFormCylinder(sceneObjHolder, infoIter);
         else if (formType === AreaFormType.Bowl)
             this.form = new AreaFormBowl(sceneObjHolder, infoIter);
@@ -273,9 +273,15 @@ export class AreaObjMgr<T extends AreaObj> extends NameObj {
     }
 
     public find_in(v: ReadonlyVec3): T | null {
-        for (let i = 0; i < this.areaObj.length; i++)
+        for (let i = this.areaObj.length - 1; i >= 0; i--)
             if (this.areaObj[i].isInVolume(v))
                 return this.areaObj[i];
         return null;
     }
+}
+
+export function isInAreaObj(sceneObjHolder: SceneObjHolder, managerName: string, pos: ReadonlyVec3): boolean {
+    if (sceneObjHolder.areaObjContainer === null)
+        return false;
+    return sceneObjHolder.areaObjContainer.getAreaObj(managerName, pos) !== null;
 }

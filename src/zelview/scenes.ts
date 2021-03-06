@@ -1,14 +1,16 @@
 
 import * as Viewer from '../viewer';
-import { GfxDevice, GfxRenderPassDescriptor, GfxRenderPass, GfxHostAccessPass } from '../gfx/platform/GfxPlatform';
-import { makeClearRenderPassDescriptor, BasicRenderTarget } from '../gfx/helpers/RenderTargetHelpers';
-import { GfxRenderHelper } from '../gfx/render/GfxRenderGraph';
+import { GfxDevice, GfxRenderPassDescriptor, GfxCullMode } from '../gfx/platform/GfxPlatform';
+import { makeClearRenderPassDescriptor, pushAntialiasingPostProcessPass } from '../gfx/helpers/RenderGraphHelpers';
+import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper';
 import { OpaqueBlack } from '../Color';
 import { SceneContext } from '../SceneBase';
-import { readZELVIEW0, Headers } from './zelview0';
+import { readZELVIEW0, Headers, ZELVIEW0 } from './zelview0';
 import { RootMeshRenderer, MeshData, Mesh } from './render';
 import { RSPState, RSPOutput } from './f3dzex';
 import { CameraController } from '../Camera';
+import * as UI from '../ui';
+import { GfxrAttachmentSlot, makeBackbufferDescSimple } from '../gfx/render/GfxRenderGraph';
 
 const pathBase = `zelview`;
 
@@ -18,44 +20,69 @@ class ZelviewRenderer implements Viewer.SceneGfx {
     public meshDatas: MeshData[] = [];
     public meshRenderers: RootMeshRenderer[] = [];
 
-    private renderTarget = new BasicRenderTarget();
     public renderHelper: GfxRenderHelper;
 
-    constructor(device: GfxDevice) {
+    constructor(device: GfxDevice, private zelview: ZELVIEW0) {
         this.renderHelper = new GfxRenderHelper(device);
-        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(true, OpaqueBlack);
+        this.clearRenderPassDescriptor = makeClearRenderPassDescriptor(OpaqueBlack);
+    }
+
+    public createPanels(): UI.Panel[] {
+        const renderHacksPanel = new UI.Panel();
+
+        renderHacksPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
+        renderHacksPanel.setTitle(UI.RENDER_HACKS_ICON, 'Render Hacks');
+        const enableCullingCheckbox = new UI.Checkbox('Force Backfacing Culling', false);
+        enableCullingCheckbox.onchanged = () => {
+            for (let i = 0; i < this.meshRenderers.length; i++)
+                this.meshRenderers[i].setCullModeOverride(enableCullingCheckbox.checked ? GfxCullMode.BACK : GfxCullMode.NONE);
+        };
+        renderHacksPanel.contents.appendChild(enableCullingCheckbox.elem);
+
+        return [renderHacksPanel];
     }
 
     public adjustCameraController(c: CameraController) {
         c.setSceneMoveSpeedMult(16/60);
     }
 
-    private prepareToRender(device: GfxDevice, hostAccessPass: GfxHostAccessPass, viewerInput: Viewer.ViewerRenderInput): void {
+    private prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.renderHelper.pushTemplateRenderInst();
 
         for (let i = 0; i < this.meshRenderers.length; i++)
             this.meshRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
         this.renderHelper.renderInstManager.popTemplateRenderInst();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
+        this.renderHelper.prepareToRender(device);
     }
 
-    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): GfxRenderPass {
-        const hostAccessPass = device.createHostAccessPass();
-        this.prepareToRender(device, hostAccessPass, viewerInput);
-        device.submitPass(hostAccessPass);
-
+    public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
-        this.renderTarget.setParameters(device, viewerInput.backbufferWidth, viewerInput.backbufferHeight);
-        const passRenderer = this.renderTarget.createRenderPass(device, viewerInput.viewport, this.clearRenderPassDescriptor);
-        renderInstManager.drawOnPassRenderer(device, passRenderer);
+        const builder = this.renderHelper.renderGraph.newGraphBuilder();
+
+        const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, this.clearRenderPassDescriptor);
+        const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, this.clearRenderPassDescriptor);
+
+        const mainColorTargetID = builder.createRenderTargetID(mainColorDesc, 'Main Color');
+        const mainDepthTargetID = builder.createRenderTargetID(mainDepthDesc, 'Main Depth');
+        builder.pushPass((pass) => {
+            pass.setDebugName('Main');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, mainDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawOnPassRenderer(device, passRenderer);
+            });
+        });
+        pushAntialiasingPostProcessPass(builder, this.renderHelper, viewerInput, mainColorTargetID);
+        builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
+
+        this.prepareToRender(device, viewerInput);
+        this.renderHelper.renderGraph.execute(device, builder);
         renderInstManager.resetRenderInsts();
-        return passRenderer;
     }
 
     public destroy(device: GfxDevice): void {
         this.renderHelper.destroy(device);
-        this.renderTarget.destroy(device);
         for (let i = 0; i < this.meshDatas.length; i++)
             this.meshDatas[i].destroy(device);
         for (let i = 0; i < this.meshRenderers.length; i++)
@@ -63,59 +90,63 @@ class ZelviewRenderer implements Viewer.SceneGfx {
     }
 }
 
-class ZelviewSceneDesc implements Viewer.SceneDesc {
-    constructor(public id: string, public name: string) {
+function createRendererFromZELVIEW0(device: GfxDevice, zelview: ZELVIEW0): ZelviewRenderer {
+    const renderer = new ZelviewRenderer(device, zelview);
+
+    const headers = zelview.loadScene(zelview.sceneFile);
+    // console.log(`headers: ${JSON.stringify(headers, null, '\t')}`);
+
+    function createMeshRenderer(rspOutput: (RSPOutput | null)) {
+        if (!rspOutput) {
+            return;
+        }
+        
+        const cache = renderer.renderHelper.getCache();
+        const mesh: Mesh = {
+            sharedOutput: zelview.sharedOutput,
+            rspState: new RSPState(headers.rom, zelview.sharedOutput),
+            rspOutput: rspOutput,
+        }
+
+        const meshData = new MeshData(device, cache, mesh);
+        const meshRenderer = new RootMeshRenderer(device, cache, meshData);
+        renderer.meshDatas.push(meshData);
+        renderer.meshRenderers.push(meshRenderer);
+    }
+
+    function createRenderer(headers: Headers) {
+        if (headers.mesh) {
+            for (let i = 0; i < headers.mesh.opaque.length; i++) {
+                createMeshRenderer(headers.mesh.opaque[i]);
+            }
+            
+            for (let i = 0; i < headers.mesh.transparent.length; i++) {
+                // FIXME: sort transparent meshes back-to-front
+                createMeshRenderer(headers.mesh.transparent[i]);
+            }
+        } else {
+            for (let i = 0; i < headers.rooms.length; i++) {
+                console.log(`Loading ${headers.filename} room ${i}...`);
+                createRenderer(headers.rooms[i]);
+            }
+        }
+    }
+
+    createRenderer(headers);
+
+    return renderer;
+}
+
+export class ZelviewSceneDesc implements Viewer.SceneDesc {
+    constructor(public id: string, public name: string, private base: string = pathBase) {
     }
 
     public async createScene(device: GfxDevice, context: SceneContext): Promise<Viewer.SceneGfx> {
         const dataFetcher = context.dataFetcher;
-        const zelviewData = await dataFetcher.fetchData(`${pathBase}/${this.id}.zelview0`);
+        const zelviewData = await dataFetcher.fetchData(`${this.base}/${this.id}.zelview0`);
 
-        const renderer = new ZelviewRenderer(device);
-
-        const zelview = readZELVIEW0(zelviewData);
-        const headers = zelview.loadMainScene();
-        //console.log(`headers: ${JSON.stringify(headers, null, '\t')}`);
-
-        function createMeshRenderer(rspOutput: (RSPOutput | null)) {
-            if (!rspOutput) {
-                return;
-            }
-            
-            const cache = renderer.renderHelper.getCache();
-            const mesh: Mesh = {
-                sharedOutput: zelview.sharedOutput,
-                rspState: new RSPState(headers.rom, zelview.sharedOutput),
-                rspOutput: rspOutput,
-            }
-
-            const meshData = new MeshData(device, cache, mesh);
-            const meshRenderer = new RootMeshRenderer(device, cache, meshData);
-            renderer.meshDatas.push(meshData);
-            renderer.meshRenderers.push(meshRenderer);
-        }
-
-        function createRenderer(headers: Headers) {
-            if (headers.mesh) {
-                for (let i = 0; i < headers.mesh.opaque.length; i++) {
-                    createMeshRenderer(headers.mesh.opaque[i]);
-                }
-                
-                for (let i = 0; i < headers.mesh.transparent.length; i++) {
-                    // FIXME: sort transparent meshes back-to-front
-                    createMeshRenderer(headers.mesh.transparent[i]);
-                }
-            } else {
-                for (let i = 0; i < headers.rooms.length; i++) {
-                    console.log(`Loading ${headers.filename} room ${i}...`);
-                    createRenderer(headers.rooms[i]);
-                }
-            }
-        }
-
-        createRenderer(headers);
-
-        return renderer;
+        const zelview0 = readZELVIEW0(zelviewData);
+        return createRendererFromZELVIEW0(device, zelview0);
     }
 }
 

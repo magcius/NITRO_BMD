@@ -1,21 +1,13 @@
 
 import ArrayBufferSlice from "../../ArrayBufferSlice";
 import { readFileSync, writeFileSync } from "fs";
-import { assert, readString, decodeString } from "../../util";
+import { assert, decodeString, readString } from "../../util";
 import * as Yay0 from "../../Common/compression/Yay0";
 import * as BYML from "../../byml";
 
 function fetchDataSync(path: string): ArrayBufferSlice {
     const b: Buffer = readFileSync(path);
     return new ArrayBufferSlice(b.buffer as ArrayBuffer);
-}
-
-function readStringSJIS(buffer: ArrayBufferSlice, offs: number = 0): string {
-    const view = buffer.createDataView(offs);
-    let i = 0;
-    while (view.getUint8(i) !== 0)
-        i++;
-    return decodeString(buffer.subarray(offs, i), 'sjis');
 }
 
 const pathBaseIn  = `../../../data/pm64_raw`;
@@ -76,7 +68,7 @@ function main() {
         const areaName = readString(buffer, areaNameOffs + 0x00, 0x10, true);
         const areaNameSJISAddr = view.getUint32(areaTableIdx + 0x0C);
         const areaNameSJISOffs = translateMapTableAddr(areaNameSJISAddr);
-        const areaNameSJIS = readStringSJIS(buffer.subarray(areaNameSJISOffs, 0x20));
+        const areaNameSJIS = decodeString(buffer, areaNameSJISOffs, 0x20, 'sjis');
         areaTableIdx += 0x10;
 
         let mapTableIdx = translateMapTableAddr(mapTableAddr);

@@ -3,7 +3,7 @@ import { assert } from "../../util";
 import { UVMD, UVMDRenderer } from "./UVMD";
 import { GfxDevice } from "../../gfx/platform/GfxPlatform";
 import { mat4 } from "gl-matrix";
-import { GfxRenderInstManager } from "../../gfx/render/GfxRenderer";
+import { GfxRenderInstManager } from "../../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../../viewer";
 import { RendererStore } from "../Scenes";
 

@@ -1,6 +1,6 @@
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
-import { assert, readString, align } from "../util";
+import { assert, align, readString, decodeString } from "../util";
 
 // Dark Souls MTD (Material Definition)
 // https://github.com/JKAnderson/SoulsFormats/blob/master/SoulsFormats/Formats/MTD.cs
@@ -23,7 +23,6 @@ export interface MTDParam {
 
 export interface MTDTexture {
     name: string;
-    uvNumberUncollapsed: number;
     uvNumber: number;
     shaderDataIndex: number;
 }
@@ -90,7 +89,7 @@ class DataReader {
 
     public readMarkedString(expectedMarker: number): string {
         const size = this.view.getUint32(this.offs + 0x00, true);
-        const str = readString(this.buffer, this.offs + 0x04, size, false);
+        const str = decodeString(this.buffer, this.offs + 0x04, size, 'sjis');
         this.offs += 0x04 + size;
         this.assertMarker(expectedMarker);
         return str;
@@ -163,13 +162,13 @@ export function parse(buffer: ArrayBufferSlice): MTD {
     const textureCount = reader.readUint32();
     const textures: MTDTexture[] = [];
 
-    let lastUvUncollapsed = -1, lastUvIndex = -1;
     for (let i = 0; i < textureCount; i++) {
         const version = reader.assertBlock(0x2000, null, 0xA3);
         assert(version === 3 || version === 5);
 
         const name = reader.readMarkedString(0x35);
-        const uvNumberUncollapsed = reader.readUint32();
+        const uvNumber = reader.readUint32() - 1;
+        assert(uvNumber >= 0);
         reader.assertMarker(0x35);
         const shaderDataIndex = reader.readUint32();
 
@@ -181,17 +180,9 @@ export function parse(buffer: ArrayBufferSlice): MTD {
                 reader.readFloat32();
         }
 
-        // Collapse UV
-        let uvNumber = -1;
-        if (uvNumberUncollapsed === lastUvUncollapsed) {
-            uvNumber = lastUvIndex;
-        } else {
-            uvNumber = ++lastUvIndex;
-            lastUvUncollapsed = uvNumberUncollapsed;
-        }
-
-        textures.push({ name, uvNumberUncollapsed, uvNumber, shaderDataIndex });
+        textures.push({ name, uvNumber, shaderDataIndex });
     }
+
     reader.assertMarker(0x04);
     reader.assertUint32(0);
 

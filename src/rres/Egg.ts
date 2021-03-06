@@ -119,13 +119,13 @@ export class EggBinaryLight {
 
         if (this.lightType === EggBinaryLightType.POINT) {
             vec3.copy(obj.light.Position, this.pos);
-            vec3.set(obj.light.Direction, 0, 0, 0);
+            vec3.zero(obj.light.Direction);
         } else if (this.lightType === EggBinaryLightType.DIRECTIONAL) {
             const posX = (this.aim[0] - this.pos[0]) * -1e10;
             const posY = (this.aim[1] - this.pos[1]) * -1e10;
             const posZ = (this.aim[2] - this.pos[2]) * -1e10;
             vec3.set(obj.light.Position, posX, posY, posZ);
-            vec3.set(obj.light.Direction, 0, 0, 0);
+            vec3.zero(obj.light.Direction);
         } else if (this.lightType === EggBinaryLightType.SPOT) {
             vec3.copy(obj.light.Position, this.pos);
             vec3.copy(obj.light.Direction, this.aim);

@@ -4,14 +4,14 @@ import * as BRRES from './brres';
 import * as GX_Material from '../gx/gx_material';
 import { mat4, vec3 } from "gl-matrix";
 import { MaterialParams, GXTextureHolder, ColorKind, translateTexFilterGfx, translateWrapModeGfx, PacketParams, loadedDataCoalescerComboGfx } from "../gx/gx_render";
-import { GXShapeHelperGfx, GXMaterialHelperGfx, autoOptimizeMaterial } from "../gx/gx_render";
+import { GXShapeHelperGfx, GXMaterialHelperGfx } from "../gx/gx_render";
 import { computeViewMatrix, computeViewMatrixSkybox, Camera, computeViewSpaceDepthFromWorldSpaceAABB, texProjCameraSceneTex } from "../Camera";
 import AnimationController from "../AnimationController";
 import { TextureMapping } from "../TextureHolder";
 import { IntersectionState, AABB } from "../Geometry";
 import { GfxDevice, GfxSampler, GfxNormalizedViewportCoords } from "../gfx/platform/GfxPlatform";
 import { ViewerRenderInput } from "../viewer";
-import { GfxRenderInst, GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth, setSortKeyBias } from "../gfx/render/GfxRenderer";
+import { GfxRenderInst, GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth, setSortKeyBias } from "../gfx/render/GfxRenderInstManager";
 import { GfxBufferCoalescerCombo } from '../gfx/helpers/BufferHelpers';
 import { nArray, assertExists } from '../util';
 import { getDebugOverlayCanvas2D, drawWorldSpaceLine } from '../DebugJunk';
@@ -19,6 +19,7 @@ import { colorCopy, Color } from '../Color';
 import { computeNormalMatrix, texEnvMtx } from '../MathHelpers';
 import { GfxRenderCache } from '../gfx/render/GfxRenderCache';
 import { LoadedVertexDraw } from '../gx/gx_displaylist';
+import { arrayCopy } from '../gfx/platform/GfxPlatformUtil';
 
 export class RRESTextureHolder extends GXTextureHolder<BRRES.TEX0> {
     public addRRESTextures(device: GfxDevice, rres: BRRES.RRES): void {
@@ -90,12 +91,12 @@ class ShapeInstance {
 
         packetParams.clear();
         for (let p = 0; p < this.shape.loadedVertexData.draws.length; p++) {
-            const packet = this.shape.loadedVertexData.draws[p];
+            const draw = this.shape.loadedVertexData.draws[p];
 
             let instVisible = false;
             if (usesSkinning) {
-                for (let j = 0; j < packet.posNrmMatrixTable.length; j++) {
-                    const posNrmMatrixIdx = packet.posNrmMatrixTable[j];
+                for (let j = 0; j < draw.posMatrixTable.length; j++) {
+                    const posNrmMatrixIdx = draw.posMatrixTable[j];
 
                     // Leave existing matrix.
                     if (posNrmMatrixIdx === 0xFFFF)
@@ -115,11 +116,11 @@ class ShapeInstance {
                 continue;
 
             const renderInst = renderInstManager.newRenderInst();
-            this.shapeData.setOnRenderInst(renderInst, packet);
+            this.shapeData.setOnRenderInst(renderInst, draw);
             materialInstance.materialHelper.allocatePacketParamsDataOnInst(renderInst, packetParams);
 
             if (usesSkinning)
-                materialInstance.fillMaterialParams(renderInst, textureHolder, instanceStateData, this.shape.mtxIdx, packet, camera, viewport);
+                materialInstance.fillMaterialParams(renderInst, textureHolder, instanceStateData, this.shape.mtxIdx, draw, camera, viewport);
 
             renderInstManager.submitRenderInst(renderInst);
         }
@@ -137,23 +138,15 @@ function mat4SwapTranslationColumns(m: mat4): void {
     m[9] = ty;
 }
 
-function colorChannelCopy(o: GX_Material.ColorChannelControl): GX_Material.ColorChannelControl {
-    return Object.assign({}, o);
+function colorChannelCopy(o: Readonly<GX_Material.ColorChannelControl>): GX_Material.ColorChannelControl {
+    const { lightingEnabled, matColorSource, ambColorSource, litMask, diffuseFunction, attenuationFunction } = o;
+    return { lightingEnabled, matColorSource, ambColorSource, litMask, diffuseFunction, attenuationFunction };
 }
 
-function lightChannelCopy(o: GX_Material.LightChannelControl): GX_Material.LightChannelControl {
+function lightChannelCopy(o: Readonly<GX_Material.LightChannelControl>): GX_Material.LightChannelControl {
     const colorChannel = colorChannelCopy(o.colorChannel);
     const alphaChannel = colorChannelCopy(o.alphaChannel);
     return { colorChannel, alphaChannel };
-}
-
-type CopyFunc<T> = (a: T) => T;
-
-function arrayCopy<T>(a: T[], copyFunc: CopyFunc<T>): T[] {
-    const b = Array(a.length);
-    for (let i = 0; i < a.length; i++)
-        b[i] = copyFunc(a[i]);
-    return b;
 }
 
 const materialParams = new MaterialParams();
@@ -332,7 +325,7 @@ class MaterialInstance {
         }
     }
 
-    private fillMaterialParamsData(materialParams: MaterialParams, textureHolder: GXTextureHolder, instanceStateData: InstanceStateData, posNrmMatrixIdx: number, packet: LoadedVertexDraw | null = null, camera: Camera, viewport: Readonly<GfxNormalizedViewportCoords>): void {
+    private fillMaterialParamsData(materialParams: MaterialParams, textureHolder: GXTextureHolder, instanceStateData: InstanceStateData, posNrmMatrixIdx: number, draw: LoadedVertexDraw | null = null, camera: Camera, viewport: Readonly<GfxNormalizedViewportCoords>): void {
         const material = this.materialData.material;
 
         for (let i = 0; i < 8; i++) {
@@ -350,8 +343,8 @@ class MaterialInstance {
         // Fill in our environment mapped texture matrices.
         for (let i = 0; i < 10; i++) {
             let texMtxIdx: number;
-            if (packet !== null) {
-                texMtxIdx = packet.texMatrixTable[i];
+            if (draw !== null) {
+                texMtxIdx = draw.texMatrixTable[i];
 
                 // Don't bother computing a normal matrix if the matrix is unused.
                 if (texMtxIdx === 0xFFFF)
@@ -391,9 +384,7 @@ class MaterialInstance {
                 lightSet.calcAmbColorCopy(materialParams.u_Color[ColorKind.AMB0], lightSetting);
                 if (lightSet.calcLightSetLitMask(this.materialHelper.material.lightChannels, lightSetting)) {
                     this.materialHelper.material.hasLightsBlock = undefined;
-                    autoOptimizeMaterial(this.materialHelper.material);
-                    this.materialHelper.calcMaterialParamsBufferSize();
-                    this.materialHelper.createProgram();
+                    this.materialHelper.autoOptimizeMaterial();
                 }
             }
         }
@@ -415,8 +406,8 @@ class MaterialInstance {
         this.materialHelper.setOnRenderInst(device, cache, renderInst);
     }
 
-    public fillMaterialParams(renderInst: GfxRenderInst, textureHolder: GXTextureHolder, instanceStateData: InstanceStateData, posNrmMatrixIdx: number, packet: LoadedVertexDraw | null, camera: Camera, viewport: Readonly<GfxNormalizedViewportCoords>): void {
-        this.fillMaterialParamsData(materialParams, textureHolder, instanceStateData, posNrmMatrixIdx, packet, camera, viewport);
+    public fillMaterialParams(renderInst: GfxRenderInst, textureHolder: GXTextureHolder, instanceStateData: InstanceStateData, posNrmMatrixIdx: number, draw: LoadedVertexDraw | null, camera: Camera, viewport: Readonly<GfxNormalizedViewportCoords>): void {
+        this.fillMaterialParamsData(materialParams, textureHolder, instanceStateData, posNrmMatrixIdx, draw, camera, viewport);
         this.materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams);
         renderInst.setSamplerBindingsFromTextureMappings(materialParams.m_TextureMapping);
     }
@@ -857,9 +848,9 @@ export class MDL0ModelInstance {
                 if (this.debugBones) {
                     const ctx = getDebugOverlayCanvas2D();
 
-                    vec3.set(scratchVec3a, 0, 0, 0);
+                    vec3.zero(scratchVec3a);
                     vec3.transformMat4(scratchVec3a, scratchVec3a, this.instanceStateData.jointToWorldMatrixArray[parentMtxId]);
-                    vec3.set(scratchVec3b, 0, 0, 0);
+                    vec3.zero(scratchVec3b);
                     vec3.transformMat4(scratchVec3b, scratchVec3b, this.instanceStateData.jointToWorldMatrixArray[dstMtxId]);
 
                     drawWorldSpaceLine(ctx, camera.clipFromWorldMatrix, scratchVec3a, scratchVec3b);

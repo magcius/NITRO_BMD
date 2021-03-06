@@ -168,9 +168,7 @@ function makeFakeTexture(device: GfxDevice, num: number): SFATextureArray {
         }
     }
 
-    const hostAccessPass = device.createHostAccessPass();
-    hostAccessPass.uploadTextureData(gfxTexture, 0, [pixels]);
-    device.submitPass(hostAccessPass);
+    device.uploadTextureData(gfxTexture, 0, [pixels]);
 
     return {
         textures: [{

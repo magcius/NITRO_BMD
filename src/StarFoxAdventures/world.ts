@@ -3,32 +3,34 @@ import * as UI from '../ui';
 import { DataFetcher } from '../DataFetcher';
 import * as Viewer from '../viewer';
 import { GfxDevice } from '../gfx/platform/GfxPlatform';
-import { GfxRenderInstManager, GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, GfxRenderInst, GfxRenderInstList } from "../gfx/render/GfxRenderInstManager";
+import { GfxrAttachmentSlot, GfxrGraphBuilder } from '../gfx/render/GfxRenderGraph';
 import { SceneContext } from '../SceneBase';
 import { TDDraw } from "../SuperMarioGalaxy/DDraw";
 import * as GX from '../gx/gx_enum';
+import * as GX_Material from '../gx/gx_material';
+import { GXMaterialBuilder } from '../gx/GXMaterialBuilder';
 import { ViewerRenderInput } from "../viewer";
-import { PacketParams, GXMaterialHelperGfx, MaterialParams } from '../gx/gx_render';
+import { PacketParams, GXMaterialHelperGfx, MaterialParams, fillSceneParamsDataOnTemplate, SceneParams, fillSceneParams, fillSceneParamsData } from '../gx/gx_render';
 import { getDebugOverlayCanvas2D, drawWorldSpaceText, drawWorldSpacePoint, drawWorldSpaceLine } from "../DebugJunk";
 import { getMatrixAxisZ } from '../MathHelpers';
-import * as GX_Material from '../gx/gx_material';
+import { computeViewMatrix } from '../Camera';
 
 import { SFA_GAME_INFO, GameInfo } from './scenes';
 import { loadRes, ResourceCollection } from './resource';
 import { ObjectManager, ObjectInstance, ObjectRenderContext } from './objects';
 import { EnvfxManager } from './envfx';
-import { SFARenderer, SceneRenderContext } from './render';
-import { GXMaterialBuilder } from '../gx/GXMaterialBuilder';
+import { SFARenderer, SceneRenderContext, SFARenderLists } from './render';
 import { MapInstance, loadMap } from './maps';
 import { dataSubarray, readVec3 } from './util';
-import { ModelInstance, ModelRenderContext, DrawStep } from './models';
+import { ModelRenderContext } from './models';
 import { MaterialFactory } from './materials';
 import { SFAAnimationController } from './animation';
 import { SFABlockFetcher } from './blocks';
 import { colorNewFromRGBA, Color, colorCopy } from '../Color';
 import { getCamPos } from './util';
-import { computeViewMatrix } from '../Camera';
-import { noClearRenderPassDescriptor } from '../gfx/helpers/RenderTargetHelpers';
+import { nArray } from '../util';
+import { TextureMapping } from '../TextureHolder';
 
 const materialParams = new MaterialParams();
 const packetParams = new PacketParams();
@@ -37,11 +39,10 @@ function submitScratchRenderInst(device: GfxDevice, renderInstManager: GfxRender
     materialHelper.setOnRenderInst(device, renderInstManager.gfxRenderCache, renderInst);
     renderInst.setSamplerBindingsFromTextureMappings(materialParams_.m_TextureMapping);
     materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams_);
-    if (noViewMatrix) {
+    if (noViewMatrix)
         mat4.identity(packetParams_.u_PosMtx[0]);
-    } else {
+    else
         mat4.copy(packetParams_.u_PosMtx[0], viewerInput.camera.viewMatrix);
-    }
     materialHelper.allocatePacketParamsDataOnInst(renderInst, packetParams_);
     renderInstManager.submitRenderInst(renderInst);
 }
@@ -141,6 +142,7 @@ export class World {
 const scratchMtx0 = mat4.create();
 const scratchVec0 = vec3.create();
 const scratchColor0 = colorNewFromRGBA(1, 1, 1, 1);
+const scratchSceneParams = new SceneParams();
 
 class WorldRenderer extends SFARenderer {
     private ddraw = new TDDraw();
@@ -188,25 +190,25 @@ class WorldRenderer extends SFARenderer {
         this.timeSelect.setValue(4);
         timePanel.contents.append(this.timeSelect.elem);
 
-        const enableAmbient = new UI.Checkbox("Enable ambient lighting", true);
-        enableAmbient.onchanged = () => {
-            this.enableAmbient = enableAmbient.checked;
+        const disableAmbient = new UI.Checkbox("Disable ambient lighting", false);
+        disableAmbient.onchanged = () => {
+            this.enableAmbient = !disableAmbient.checked;
         };
-        timePanel.contents.append(enableAmbient.elem);
+        timePanel.contents.append(disableAmbient.elem);
 
         const layerPanel = new UI.Panel();
         layerPanel.setTitle(UI.LAYER_ICON, 'Layers');
 
-        const showObjects = new UI.Checkbox("Show objects", true);
-        showObjects.onchanged = () => {
-            this.showObjects = showObjects.checked;
+        const hideObjects = new UI.Checkbox("Hide objects", false);
+        hideObjects.onchanged = () => {
+            this.showObjects = !hideObjects.checked;
         };
-        layerPanel.contents.append(showObjects.elem);
+        layerPanel.contents.append(hideObjects.elem);
 
         this.layerSelect = new UI.Slider();
         this.layerSelect.setLabel('Layer');
         this.layerSelect.setRange(0, 16, 1);
-        this.layerSelect.setValue(0);
+        this.layerSelect.setValue(1);
         layerPanel.contents.append(this.layerSelect.elem);
 
         const showDevObjects = new UI.Checkbox("Show developer objects", false);
@@ -215,17 +217,17 @@ class WorldRenderer extends SFARenderer {
         };
         layerPanel.contents.append(showDevObjects.elem);
 
-        const showDevGeometry = new UI.Checkbox("Show developer map geometry", false);
+        const showDevGeometry = new UI.Checkbox("Show developer map shapes", false);
         showDevGeometry.onchanged = () => {
             this.showDevGeometry = showDevGeometry.checked;
         };
         layerPanel.contents.append(showDevGeometry.elem);
 
-        const enableLights = new UI.Checkbox("Enable lights", true);
-        enableLights.onchanged = () => {
-            this.enableLights = enableLights.checked;
+        const disableLights = new UI.Checkbox("Disable lights", false);
+        disableLights.onchanged = () => {
+            this.enableLights = !disableLights.checked;
         }
-        layerPanel.contents.append(enableLights.elem);
+        layerPanel.contents.append(disableLights.elem);
 
         return [timePanel, layerPanel];
     }
@@ -243,18 +245,28 @@ class WorldRenderer extends SFARenderer {
         super.update(viewerInput);
         this.world.materialFactory.update(this.animController);
         this.world.envfxMan.setTimeOfDay(this.timeSelect.getValue()|0);
-        if (!this.enableAmbient) {
+        if (!this.enableAmbient)
             this.world.envfxMan.setOverrideOutdoorAmbientColor(colorNewFromRGBA(1.0, 1.0, 1.0, 1.0));
-        } else {
+        else
             this.world.envfxMan.setOverrideOutdoorAmbientColor(null);
-        }
     }
 
-    protected renderSky(device: GfxDevice, renderInstManager: GfxRenderInstManager, sceneCtx: SceneRenderContext) {
+    protected addSkyRenderInsts(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, sceneCtx: SceneRenderContext) {
         // Draw atmosphere
         const tex = this.world.envfxMan.getAtmosphereTexture();
         if (tex !== null && tex !== undefined) {
-            this.beginPass(sceneCtx.viewerInput, true);
+            renderInstManager.setCurrentRenderInstList(renderLists.atmosphere);
+
+            // Call renderHelper.pushTemplateRenderInst (not renderInstManager)
+            // to obtain a local SceneParams buffer
+            const template = this.renderHelper.pushTemplateRenderInst();
+
+            // Setup to draw in clip space
+            fillSceneParams(scratchSceneParams, mat4.create(), sceneCtx.viewerInput.backbufferWidth, sceneCtx.viewerInput.backbufferHeight);
+            let offs = template.getUniformBufferOffset(GX_Material.GX_Program.ub_SceneParams);
+            const d = template.mapUniformBufferF32(GX_Material.GX_Program.ub_SceneParams);
+            fillSceneParamsData(d, offs, scratchSceneParams);
+
             materialParams.m_TextureMapping[0].gfxTexture = tex.gfxTexture;
             materialParams.m_TextureMapping[0].gfxSampler = tex.gfxSampler;
             materialParams.m_TextureMapping[0].width = tex.width;
@@ -269,14 +281,13 @@ class WorldRenderer extends SFARenderer {
             const camPitch = vecPitch(cameraFwd);
             const camRoll = Math.PI / 2;
 
-            // FIXME: This implementation is adapted from the game, but correctness is not verified.
-            // We should probably use a different technique, since this one works poorly in VR.
-            // TODO: Implement time of day, which the game implements by blending gradient textures on the CPU.
+            // FIXME: We should probably use a different technique since this one is poorly suited to VR.
+            // TODO: Implement precise time of day. The game blends textures on the CPU to produce
+            // an atmosphere texture for a given time of day.
             const fovRollFactor = 3.0 * (tex.height * 0.5 * sceneCtx.viewerInput.camera.fovY / Math.PI) * Math.sin(-camRoll);
             const pitchFactor = (0.5 * tex.height - 6.0) - (3.0 * tex.height * -camPitch / Math.PI);
             const t0 = (pitchFactor + fovRollFactor) / tex.height;
             const t1 = t0 - (fovRollFactor * 2.0) / tex.height;
-            // TODO: Verify to make sure the sky isn't upside-down!
 
             this.ddraw.beginDraw();
             this.ddraw.begin(GX.Command.DRAW_QUADS);
@@ -294,28 +305,55 @@ class WorldRenderer extends SFARenderer {
             submitScratchRenderInst(device, renderInstManager, this.materialHelperSky, renderInst, sceneCtx.viewerInput, true);
 
             this.ddraw.endAndUpload(device, renderInstManager);
-            
-            this.endPass(device);
+
+            renderInstManager.popTemplateRenderInst();
         }
         
         // Draw skyscape
-        this.beginPass(sceneCtx.viewerInput);
+        if (this.world.envfxMan.skyscape.objects.length !== 0) {
+            renderInstManager.setCurrentRenderInstList(renderLists.skyscape);
 
-        const objectCtx: ObjectRenderContext = {
-            sceneCtx,
-            showDevGeometry: this.showDevGeometry,
-            setupLights: () => {}, // Lights are not used when rendering skyscape objects (?)
+            const template = renderInstManager.pushTemplateRenderInst();
+            fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
+
+            const objectCtx: ObjectRenderContext = {
+                sceneCtx,
+                showDevGeometry: this.showDevGeometry,
+                setupLights: () => {}, // Lights are not used when rendering skyscape objects (?)
+            }
+
+            const eyePos = scratchVec0;
+            getCamPos(eyePos, sceneCtx.viewerInput.camera);
+            for (let i = 0; i < this.world.envfxMan.skyscape.objects.length; i++) {
+                const obj = this.world.envfxMan.skyscape.objects[i];
+                obj.setPosition(eyePos);
+                obj.render(device, renderInstManager, null, objectCtx);
+            }
+
+            renderInstManager.popTemplateRenderInst();
         }
+    }
 
-        const eyePos = scratchVec0;
-        getCamPos(eyePos, sceneCtx.viewerInput.camera);
-        for (let i = 0; i < this.world.envfxMan.skyscape.objects.length; i++) {
-            const obj = this.world.envfxMan.skyscape.objects[i];
-            obj.setPosition(eyePos);
-            obj.render(device, renderInstManager, objectCtx);
-        }
+    protected addSkyRenderPasses(builder: GfxrGraphBuilder, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, mainColorTargetID: number, mainDepthTargetID: number, sceneCtx: SceneRenderContext) {
+        builder.pushPass((pass) => {
+            pass.setDebugName('Atmosphere');
+            pass.setViewport(sceneCtx.viewerInput.viewport);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawListOnPassRenderer(renderLists.atmosphere, passRenderer);
+            });
+        });
 
-        this.endPass(device);
+        builder.pushPass((pass) => {
+            pass.setDebugName('Skyscape');
+            pass.setViewport(sceneCtx.viewerInput.viewport);
+            pass.attachRenderTargetID(GfxrAttachmentSlot.Color0, mainColorTargetID);
+            const skyDepthTargetID = builder.createRenderTargetID(this.mainDepthDesc, 'Skyscape Depth');
+            pass.attachRenderTargetID(GfxrAttachmentSlot.DepthStencil, skyDepthTargetID);
+            pass.exec((passRenderer) => {
+                renderInstManager.drawListOnPassRenderer(renderLists.skyscape, passRenderer);
+            });
+        });
     }
 
     private setupLights(lights: GX_Material.Light[], modelCtx: ModelRenderContext) {
@@ -353,13 +391,15 @@ class WorldRenderer extends SFARenderer {
             }
         }
 
-        for (; i < 8; i++) {
+        for (; i < 8; i++)
             lights[i].reset();
-        }
     }
 
-    protected renderWorld(device: GfxDevice, renderInstManager: GfxRenderInstManager, sceneCtx: SceneRenderContext) {
-        // Render opaques
+    protected addWorldRenderInsts(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, sceneCtx: SceneRenderContext) {
+        renderInstManager.setCurrentRenderInstList(renderLists.world[0]);
+
+        const template = renderInstManager.pushTemplateRenderInst();
+        fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
 
         this.world.envfxMan.getAmbientColor(scratchColor0, 0); // Always use ambience #0 when rendering map
         const modelCtx: ModelRenderContext = {
@@ -367,11 +407,10 @@ class WorldRenderer extends SFARenderer {
             showDevGeometry: this.showDevGeometry,
             outdoorAmbientColor: scratchColor0,
             setupLights: this.setupLights.bind(this),
-        }
+        };
 
-        this.beginPass(sceneCtx.viewerInput);
         if (this.world.mapInstance !== null)
-            this.world.mapInstance.prepareToRender(device, renderInstManager, modelCtx);
+            this.world.mapInstance.prepareToRender(device, renderInstManager, renderLists, modelCtx);
 
         if (this.showObjects) {
             const ctx = getDebugOverlayCanvas2D();
@@ -382,7 +421,7 @@ class WorldRenderer extends SFARenderer {
                     continue;
     
                 if (obj.isInLayer(this.layerSelect.getValue())) {
-                    obj.render(device, renderInstManager, modelCtx);
+                    obj.render(device, renderInstManager, renderLists, modelCtx);
         
                     const drawLabels = false;
                     if (drawLabels)
@@ -391,26 +430,7 @@ class WorldRenderer extends SFARenderer {
             }
         }
 
-        // Custom version of this.endPass(device)
-        this.renderInstManager.popTemplateRenderInst();
-
-        let hostAccessPass = device.createHostAccessPass();
-        this.renderHelper.prepareToRender(device, hostAccessPass);
-        device.submitPass(hostAccessPass);
-        
-        const renderIntoPass = (keys: number[]) => {
-            this.renderPass = this.renderTarget.createRenderPass(device, this.viewport, noClearRenderPassDescriptor, this.sceneTexture.gfxTexture);
-            for (let i = 0; i < keys.length; i++) {
-                this.renderInstManager.setVisibleByFilterKeyExact(keys[i]);
-                this.renderInstManager.drawOnPassRenderer(device, this.renderPass);
-            }
-            device.submitPass(this.renderPass);
-        };
-
-        renderIntoPass([0, DrawStep.Furs]);
-        renderIntoPass([DrawStep.Waters, 1, 2]);
-
-        this.renderInstManager.resetRenderInsts();
+        renderInstManager.popTemplateRenderInst();
     }
 }
 

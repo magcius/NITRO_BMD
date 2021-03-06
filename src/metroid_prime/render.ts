@@ -13,14 +13,7 @@ import { CMDL } from './cmdl';
 import { TextureMapping } from '../TextureHolder';
 import { GfxDevice, GfxFormat, GfxSampler, GfxMipFilterMode, GfxTexFilterMode, GfxWrapMode } from '../gfx/platform/GfxPlatform';
 import { GfxCoalescedBuffersCombo, GfxBufferCoalescerCombo } from '../gfx/helpers/BufferHelpers';
-import {
-    GfxRenderInst,
-    GfxRenderInstManager,
-    makeSortKey,
-    GfxRendererLayer,
-    setSortKeyDepthKey,
-    setSortKeyBias
-} from "../gfx/render/GfxRenderer";
+import { GfxRenderInst, GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepthKey } from '../gfx/render/GfxRenderInstManager';
 import { computeViewMatrixSkybox, computeViewMatrix } from '../Camera';
 import { LoadedVertexData, LoadedVertexDraw, LoadedVertexLayout } from '../gx/gx_displaylist';
 import { GXMaterialHacks, lightSetWorldPositionViewMatrix, lightSetWorldDirectionNormalMatrix, GX_Program } from '../gx/gx_material';
@@ -482,9 +475,9 @@ function mergeSurfaces(surfaces: Surface[]): MergedSurface {
     const srcDraw = surfaces[0].loadedVertexData.draws[0];
     const indexOffset = 0;
     const indexCount = totalIndexCount;
-    const posNrmMatrixTable = srcDraw.posNrmMatrixTable;
+    const posNrmMatrixTable = srcDraw.posMatrixTable;
     const texMatrixTable = srcDraw.texMatrixTable;
-    draws.push({ indexOffset, indexCount, posNrmMatrixTable, texMatrixTable });
+    draws.push({ indexOffset, indexCount, posMatrixTable: posNrmMatrixTable, texMatrixTable });
 
     const newLoadedVertexData: LoadedVertexData = {
         indexData: indexData.buffer,
@@ -646,7 +639,7 @@ export class MREARenderer {
                     const actor = new Actor(ent, cmdlRenderer);
                     this.actors.push(actor);
                 }
- 
+
                 if (ent.type === MP1EntityType.AreaAttributes || ent.type === "REAA") {
                     const areaAttributes = ent as AreaAttributes;
 

@@ -1,6 +1,6 @@
 
 import { GfxDevice, GfxTexture, GfxWrapMode, GfxTexFilterMode, GfxMipFilterMode, GfxProgram, GfxBindingLayoutDescriptor, GfxBlendMode, GfxBlendFactor } from "../gfx/platform/GfxPlatform";
-import { GfxRenderInstManager, makeSortKeyOpaque, GfxRendererLayer, GfxRenderInst } from "../gfx/render/GfxRenderer";
+import { GfxRenderInstManager, makeSortKeyOpaque, GfxRendererLayer, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { ViewerRenderInput } from "../viewer";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { ModelCache } from "./Scenes_Fez";
