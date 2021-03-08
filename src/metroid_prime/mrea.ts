@@ -11,7 +11,7 @@ import { InputStream } from "./stream";
 import { TXTR } from "./txtr";
 
 import { ResourceSystem } from "./resource";
-import { align, assert, assertExists, nArray } from "../util";
+import { align, assert, assertExists } from "../util";
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import {
     compileVtxLoaderMultiVat,
@@ -20,7 +20,6 @@ import {
     GX_VtxAttrFmt,
     GX_VtxDesc,
     LoadedVertexData,
-    LoadedVertexDraw,
     LoadedVertexLayout
 } from "../gx/gx_displaylist";
 import { mat4, vec3 } from "gl-matrix";
@@ -29,9 +28,8 @@ import { decompress as lzoDecompress } from "../Common/Compression/LZO";
 import { AABB } from "../Geometry";
 import { Color, colorFromRGBA8, colorNewCopy, colorNewFromRGBA, TransparentBlack } from "../Color";
 import { MathConstants } from "../MathHelpers";
-import { CSKR, SkinRule } from "./cskr";
-import { Endianness, getSystemEndianness } from "../endian";
-import { maxPosMtxArraySize } from "./render";
+import { CSKR } from "./cskr";
+import { maxPosMtxArraySize, maxTexMtxArraySize } from "./render";
 
 export interface MREA {
     materialSet: MaterialSet;
@@ -645,7 +643,6 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         const generateMtxIdxs = !isEchoes && cskr;
         let texNMtxIdx: number | undefined = undefined;
         let texGenNMtxIdxs: number[] = [];
-        let availableMtxSlots = 10;
         if (generateMtxIdxs) {
             vcd[GX.Attr.PNMTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
 
@@ -660,8 +657,6 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     uvAnim.type === UVAnimationType.ENV_MAPPING_MODEL ||
                     uvAnim.type === UVAnimationType.ENV_MAPPING_CYLINDER) {
                     texNMtxIdx = i;
-                    availableMtxSlots = 10 - material.uvAnimations.length + 1;
-                    assert(availableMtxSlots >= 3);
                     material.gxMaterial.useTexMtxIdx = Array(8).fill(false);
                     for (let tg = 0; tg < material.gxMaterial.texGens.length; ++tg) {
                         const texGen = material.gxMaterial.texGens[tg];
@@ -721,143 +716,57 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         vtxArrays[GX.Attr.TEX6] = { buffer: stream.getBuffer(), offs: uvfSectionOffs, stride: getAttributeByteSize(fmtVat, GX.Attr.TEX6) };
         vtxArrays[GX.Attr.TEX7] = { buffer: stream.getBuffer(), offs: uvfSectionOffs, stride: getAttributeByteSize(fmtVat, GX.Attr.TEX7) };
 
-        let loadedVertexData = vtxLoader.runVertices(vtxArrays, dlData);
+        const loadedVertexData = vtxLoader.runVertices(vtxArrays, dlData);
 
         if (generateMtxIdxs) {
-            const littleEndian = getSystemEndianness() === Endianness.LITTLE_ENDIAN;
+            const vertexCount = loadedVertexData.totalVertexCount;
             const vertexStride = loadedVertexLayout.vertexBufferStrides[0];
             const pnMtxIdxOffs = loadedVertexLayout.vertexAttributeOffsets[GX.Attr.PNMTXIDX];
             const texMtxIdxOffs = texGenNMtxIdxs.map(idx => loadedVertexLayout.vertexAttributeOffsets[GX.Attr.TEX0MTXIDX + idx]);
-            let vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
-            const indexDataView = new Uint16Array(loadedVertexData.indexData);
+            const vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
 
-            // Only one draw of triangle primitives is generated.
-            // Split envelope banks on triangle boundaries.
-            const srcDraw = loadedVertexData.draws[0];
-            const dstDraws: LoadedVertexDraw[] = [];
-            let dstDraw: LoadedVertexDraw | null = null;
-            let skinToIndicesMapCommit = new Map<number, number[]>();
+            const draw = loadedVertexData.draws[0];
 
-            // Map<vertex-index, Map<matrix-index, [referencing-indices]>>
-            const relocationMap = new Map<number, Map<number, number[]>>();
-            let numAdditionalVertices = 0;
-
-            function emitDraw() {
-                let matrixIndex = 0;
-                for (const [skinIdx, skinIndices] of skinToIndicesMapCommit) {
-                    for (const i of skinIndices) {
-                        const v = indexDataView[i];
-                        // Target envelope indices are stored in a set so we can duplicate
-                        // vertices with conflicting envelope indices later.
-                        const matrixMap = relocationMap.get(v);
-                        if (matrixMap === undefined) {
-                            relocationMap.set(v, new Map([[matrixIndex, [i]]]));
-                        } else {
-                            const referencingIndices = matrixMap.get(matrixIndex);
-                            if (referencingIndices === undefined) {
-                                matrixMap.set(matrixIndex, [i]);
-                            } else {
-                                // A vertex referencing multiple matrix indices must be duplicated later.
-                                referencingIndices.push(i);
-                                ++numAdditionalVertices;
-                            }
-                        }
-                    }
-
-                    if (texNMtxIdx !== undefined) {
-                        dstDraw!.texMatrixTable[posMtxIdxToTexMtxIdx(matrixIndex)] = skinIdx;
-                    }
-
-                    dstDraw!.posMatrixTable[matrixIndex++] = skinIdx;
-                }
-
-                dstDraws.push(dstDraw!);
-                dstDraw = null;
-                skinToIndicesMapCommit = new Map<number, number[]>();
+            // Maps model skin indices to packed skin indices only used in surface.
+            const surfaceSkinIndicesMap = new Map<number, number>();
+            for (let v = 0; v < vertexCount; ++v) {
+                const posIdx = vertexDataView.getFloat32(v * vertexStride + pnMtxIdxOffs, true);
+                const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
+                if (!surfaceSkinIndicesMap.has(skinIdx))
+                    surfaceSkinIndicesMap.set(skinIdx, surfaceSkinIndicesMap.size);
             }
 
-            for (let i = 0; i < srcDraw.indexCount;) {
-                if (dstDraw === null) {
-                    dstDraw = {
-                        indexOffset: i,
-                        indexCount: 0,
-                        posMatrixTable: Array(10).fill(0xFFFF),
-                        texMatrixTable: Array(10).fill(0xFFFF)
-                    };
-                }
-
-                // Modify commit map directly if assured it will not overflow on this triangle.
-                const skinToIndicesMap = skinToIndicesMapCommit.size < (availableMtxSlots - 3) ?
-                    skinToIndicesMapCommit : new Map<number, number[]>(skinToIndicesMapCommit);
-
-                let skinIndexPushes: [number, number][] = [];
-                for (let j = i, jEnd = i + 3; j < jEnd; ++j) {
-                    const v = indexDataView[j];
-                    const posIdx = vertexDataView.getFloat32(v * vertexStride + pnMtxIdxOffs, littleEndian);
-                    const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
-
-                    if (!skinToIndicesMap.has(skinIdx))
-                        skinToIndicesMap.set(skinIdx, []);
-
-                    if (skinToIndicesMap.size > availableMtxSlots) {
-                        // Matrix exhaustion! Emit draw excluding this triangle and try it again.
-                        emitDraw();
-                        break;
-                    }
-
-                    skinIndexPushes.push([skinIdx, j]);
-                }
-
-                if (dstDraw === null) {
-                    // try again
-                    continue;
-                }
-
-                // clear to proceed with map mutations
-                for (const [skinIdx, j] of skinIndexPushes)
-                    skinToIndicesMap.get(skinIdx)!.push(j);
-
-                skinToIndicesMapCommit = skinToIndicesMap;
-
-                dstDraw!.indexCount += 3;
-                i += 3;
+            // Allocate extended matrix arrays and request that material is compiled
+            // to do the same. To avoid splitting geometry and increasing draw calls,
+            // emulated matrix slots are extended to accommodate exactly what the skinned
+            // geometry requires.
+            const posMtxArraySize = surfaceSkinIndicesMap.size;
+            assert(posMtxArraySize <= maxPosMtxArraySize);
+            draw.posMatrixTable = Array(posMtxArraySize).fill(0xFFFF);
+            material.gxMaterial.extendedPosMtxArraySize = Math.max(material.gxMaterial.extendedPosMtxArraySize ?? 0, posMtxArraySize);
+            if (texNMtxIdx !== undefined) {
+                const texMtxArraySize = posMtxIdxToTexMtxIdx(posMtxArraySize);
+                assert(texMtxArraySize <= maxTexMtxArraySize);
+                draw.texMatrixTable = Array(texMtxArraySize).fill(0xFFFF);
+                material.gxMaterial.extendedTexMtxArraySize = Math.max(material.gxMaterial.extendedTexMtxArraySize ?? 0, texMtxArraySize);
             }
 
-            emitDraw();
+            for (let v = 0; v < vertexCount; ++v) {
+                const posIdx = vertexDataView.getFloat32(v * vertexStride + pnMtxIdxOffs, true);
+                const skinIdx = cskr!.vertexIndexToSkinIndex(posIdx);
 
-            loadedVertexData.draws = dstDraws;
+                // Model -> Surface skin index
+                const surfaceSkinIndex = surfaceSkinIndicesMap.get(skinIdx)!;
 
-            if (numAdditionalVertices) {
-                const newVertexCount = loadedVertexData.totalVertexCount + numAdditionalVertices;
-                const reallocatedBuffer = new ArrayBuffer(newVertexCount * vertexStride);
-                new Uint8Array(reallocatedBuffer).set(new Uint8Array(loadedVertexData.vertexBuffers[0]));
-                loadedVertexData.vertexBuffers[0] = reallocatedBuffer;
-                vertexDataView = new DataView(loadedVertexData.vertexBuffers[0]);
-            }
+                // Relocate position index into surface skin index for vertex shader to lookup
+                vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, surfaceSkinIndex, true);
+                for (const texMtxIdxOff of texMtxIdxOffs)
+                    vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(surfaceSkinIndex) + 10);
 
-            for (const [v, matrixMap] of relocationMap) {
-                let relocatedFirst = false;
-                for (const [matrixIndex, indexList] of matrixMap) {
-                    if (!relocatedFirst) {
-                        // The first matrix index is relocated in-place
-                        vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
-                        for (const texMtxIdxOff of texMtxIdxOffs)
-                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
-                        relocatedFirst = true;
-                    } else {
-                        // Subsequent matrix indices require a duplicate vertex
-                        const newVertexIndex = loadedVertexData.totalVertexCount++;
-                        new Uint8Array(loadedVertexData.vertexBuffers[0]).set(new Uint8Array(loadedVertexData.vertexBuffers[0],
-                            v * vertexStride, vertexStride), newVertexIndex * vertexStride);
-                        vertexDataView.setFloat32(newVertexIndex * vertexStride + pnMtxIdxOffs, matrixIndex, littleEndian);
-                        for (const texMtxIdxOff of texMtxIdxOffs)
-                            vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(matrixIndex) + 10);
-
-                        // Patch all referencing indices to the duplicated vertex
-                        for (const i of indexList)
-                            indexDataView[i] = newVertexIndex;
-                    }
-                }
+                // Used by renderer to lookup model skin index from surface skin index for loading matrix uniforms
+                if (texNMtxIdx !== undefined)
+                    draw.texMatrixTable[posMtxIdxToTexMtxIdx(surfaceSkinIndex)] = skinIdx;
+                draw.posMatrixTable[surfaceSkinIndex] = skinIdx;
             }
         } else if (sourceEnvelopeIdx !== undefined && cskr) {
             // MP2 already has generated envelope sets for skinning - resolve the matrices via the CSKR
