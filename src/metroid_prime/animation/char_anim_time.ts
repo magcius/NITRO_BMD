@@ -14,17 +14,17 @@ export class CharAnimTime {
                 public state: AnimTimeState = time != 0.0 ? AnimTimeState.NonZero : AnimTimeState.ZeroSteady) {
     }
 
-    static FromStream(stream: InputStream): CharAnimTime {
+    public static FromStream(stream: InputStream): CharAnimTime {
         const time = stream.readFloat32();
         const state = stream.readUint32();
         return new CharAnimTime(time, state);
     }
 
-    static Infinity(): CharAnimTime {
+    public static Infinity(): CharAnimTime {
         return new CharAnimTime(1.0, AnimTimeState.Infinity);
     }
 
-    EqualsZero(): boolean {
+    public EqualsZero(): boolean {
         switch (this.state) {
             case AnimTimeState.ZeroIncreasing:
             case AnimTimeState.ZeroSteady:
@@ -32,20 +32,20 @@ export class CharAnimTime {
                 return true;
         }
 
-        return this.time == 0.0;
+        return this.time === 0.0;
     }
 
-    EpsilonZero(): boolean {
+    public EpsilonZero(): boolean {
         return Math.abs(this.time) < 0.00001;
     }
 
-    GreaterThanZero(): boolean {
+    public GreaterThanZero(): boolean {
         if (this.EqualsZero())
             return false;
         return this.time > 0.0;
     }
 
-    Direction(): number {
+    public Direction(): number {
         let direction = -1;
         if (this.state != AnimTimeState.ZeroDecreasing) {
             if (this.state != AnimTimeState.ZeroSteady)
@@ -56,29 +56,29 @@ export class CharAnimTime {
         return direction;
     }
 
-    Equals(other: CharAnimTime): boolean {
-        if (this.state == AnimTimeState.NonZero) {
-            if (other.state == AnimTimeState.NonZero)
-                return this.time == other.time;
+    public Equals(other: CharAnimTime): boolean {
+        if (this.state === AnimTimeState.NonZero) {
+            if (other.state === AnimTimeState.NonZero)
+                return this.time === other.time;
             return false;
         }
 
         if (this.EqualsZero()) {
             if (other.EqualsZero()) {
-                return this.Direction() == other.Direction();
+                return this.Direction() === other.Direction();
             }
             return false;
         }
 
-        if (other.state == AnimTimeState.Infinity)
+        if (other.state === AnimTimeState.Infinity)
             return this.time * other.time > 0.0;
 
         return false;
     }
 
-    Less(other: CharAnimTime): boolean {
-        if (this.state == AnimTimeState.NonZero) {
-            if (other.state == AnimTimeState.NonZero)
+    public Less(other: CharAnimTime): boolean {
+        if (this.state === AnimTimeState.NonZero) {
+            if (other.state === AnimTimeState.NonZero)
                 return this.time < other.time;
             if (other.EqualsZero())
                 return this.time < 0.0;
@@ -91,36 +91,36 @@ export class CharAnimTime {
                 return this.Direction() < other.Direction();
             }
 
-            if (other.state == AnimTimeState.NonZero)
+            if (other.state === AnimTimeState.NonZero)
                 return other.time > 0.0;
             return other.time > 0.0; // ?
         }
 
-        if (other.state == AnimTimeState.Infinity)
+        if (other.state === AnimTimeState.Infinity)
             return this.time < 0.0 && other.time > 0.0;
         return this.time < 0.0;
     }
 
-    LessEqual(other: CharAnimTime): boolean {
+    public LessEqual(other: CharAnimTime): boolean {
         return this.Equals(other) || this.Less(other);
     }
 
-    Greater(other: CharAnimTime): boolean {
+    public Greater(other: CharAnimTime): boolean {
         return (!this.Equals(other) && !this.Less(other));
     }
 
-    GreaterEqual(other: CharAnimTime): boolean {
+    public GreaterEqual(other: CharAnimTime): boolean {
         return this.Equals(other) || this.Greater(other);
     }
 
-    Add(other: CharAnimTime): CharAnimTime {
-        if (this.state == AnimTimeState.Infinity && other.state == AnimTimeState.Infinity) {
+    public Add(other: CharAnimTime): CharAnimTime {
+        if (this.state === AnimTimeState.Infinity && other.state === AnimTimeState.Infinity) {
             if (other.time != this.time)
                 return new CharAnimTime(0.0);
             return this;
-        } else if (this.state == AnimTimeState.Infinity) {
+        } else if (this.state === AnimTimeState.Infinity) {
             return this;
-        } else if (other.state == AnimTimeState.Infinity) {
+        } else if (other.state === AnimTimeState.Infinity) {
             return other;
         }
 
@@ -139,14 +139,14 @@ export class CharAnimTime {
         }
     }
 
-    Sub(other: CharAnimTime): CharAnimTime {
-        if (this.state == AnimTimeState.Infinity && other.state == AnimTimeState.Infinity) {
-            if (other.time == this.time)
+    public Sub(other: CharAnimTime): CharAnimTime {
+        if (this.state === AnimTimeState.Infinity && other.state === AnimTimeState.Infinity) {
+            if (other.time === this.time)
                 return new CharAnimTime(0.0);
             return this;
-        } else if (this.state == AnimTimeState.Infinity) {
+        } else if (this.state === AnimTimeState.Infinity) {
             return this;
-        } else if (other.state == AnimTimeState.Infinity) {
+        } else if (other.state === AnimTimeState.Infinity) {
             return new CharAnimTime(-other.time, AnimTimeState.Infinity);
         }
 
@@ -165,14 +165,14 @@ export class CharAnimTime {
         }
     }
 
-    Mul(other: CharAnimTime): CharAnimTime {
-        if (this.state == AnimTimeState.Infinity && other.state == AnimTimeState.Infinity) {
+    public Mul(other: CharAnimTime): CharAnimTime {
+        if (this.state === AnimTimeState.Infinity && other.state === AnimTimeState.Infinity) {
             if (other.time != this.time)
                 return new CharAnimTime(0.0);
             return this;
-        } else if (this.state == AnimTimeState.Infinity) {
+        } else if (this.state === AnimTimeState.Infinity) {
             return this;
-        } else if (other.state == AnimTimeState.Infinity) {
+        } else if (other.state === AnimTimeState.Infinity) {
             return other;
         }
 
@@ -191,8 +191,8 @@ export class CharAnimTime {
         }
     }
 
-    MulFactor(other: number): CharAnimTime {
-        if (other == 0.0)
+    public MulFactor(other: number): CharAnimTime {
+        if (other === 0.0)
             return new CharAnimTime(0.0);
 
         if (!this.EqualsZero())
@@ -211,13 +211,13 @@ export class CharAnimTime {
         }
     }
 
-    Div(other: CharAnimTime): number {
+    public Div(other: CharAnimTime): number {
         if (other.EqualsZero())
             return 0.0;
         return this.time / other.time;
     }
 
-    Copy(): CharAnimTime {
+    public Copy(): CharAnimTime {
         return new CharAnimTime(this.time, this.state);
     }
 }

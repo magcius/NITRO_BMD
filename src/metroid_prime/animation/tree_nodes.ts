@@ -28,9 +28,9 @@ export abstract class AnimTreeNode extends IAnimReader {
         super();
     }
 
-    abstract GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution
+    public abstract GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution
 
-    abstract GetBestUnblendedChild(): IAnimReader | null
+    public abstract GetBestUnblendedChild(): IAnimReader | null
 }
 
 function GetTransitionTree(a: AnimTreeNode, b: AnimTreeNode, context: AnimSysContext) {
@@ -47,7 +47,7 @@ class SequenceFundamentals {
     constructor(public steadyStateInfo: SteadyStateAnimInfo) {
     }
 
-    static Compute(nodes: AnimTreeNode[], context: AnimSysContext): SequenceFundamentals {
+    public static Compute(nodes: AnimTreeNode[], context: AnimSysContext): SequenceFundamentals {
         let duration: CharAnimTime = new CharAnimTime();
         const offset: vec3 = vec3.create();
 
@@ -78,7 +78,7 @@ class SequenceFundamentals {
         return new SequenceFundamentals(new SteadyStateAnimInfo(duration, offset, false));
     }
 
-    static ComputeMeta(nodes: IMetaAnim[], context: AnimSysContext) {
+    public static ComputeMeta(nodes: IMetaAnim[], context: AnimSysContext) {
         return SequenceFundamentals.Compute(nodes.map(a => a.GetAnimationTree(context)), context);
     }
 }
@@ -92,19 +92,19 @@ export abstract class AnimTreeSingleChild extends AnimTreeNode {
         super(name);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         return this.child.AdvanceView(dt);
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         return this.child.GetTimeRemaining();
     }
 
-    GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
         return this.child.GetPerSegmentData(indices, time);
     }
 
-    SetPhase(phase: number) {
+    public SetPhase(phase: number) {
         this.child.SetPhase(phase);
     }
 }
@@ -117,7 +117,7 @@ export abstract class AnimTreeDoubleChild extends AnimTreeNode {
         super(name);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         const resLeft = this.left.AdvanceView(dt);
         const resRight = this.right.AdvanceView(dt);
         return resLeft.remTime.Greater(resRight.remTime) ? resLeft : resRight;
@@ -166,7 +166,7 @@ export abstract class AnimTreeDoubleChild extends AnimTreeNode {
         return new DoubleChildAdvancementResults(dt, leftDeltas, rightDeltas);
     }
 
-    GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
+    public GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
         const cA = this.left.GetContributionOfHighestInfluence();
         const cB = this.right.GetContributionOfHighestInfluence();
 
@@ -180,16 +180,16 @@ export abstract class AnimTreeDoubleChild extends AnimTreeNode {
         }
     }
 
-    GetBestUnblendedChild(): IAnimReader | null {
+    public GetBestUnblendedChild(): IAnimReader | null {
         const bestChild = this.GetRightChildWeight() > 0.5 ? this.right : this.left;
         if (!bestChild)
             return null;
         return bestChild.GetBestUnblendedChild();
     }
 
-    abstract GetRightChildWeight(): number
+    public abstract GetRightChildWeight(): number
 
-    SetPhase(phase: number) {
+    public SetPhase(phase: number) {
         this.left.SetPhase(phase);
         this.right.SetPhase(phase);
     }
@@ -216,14 +216,14 @@ export class AnimTreeLoopIn extends AnimTreeSingleChild {
         super(child, name);
     }
 
-    static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, joining: AnimTreeNode, context: AnimSysContext,
+    public static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, joining: AnimTreeNode, context: AnimSysContext,
                   name: string): AnimTreeLoopIn {
         const ret = new AnimTreeLoopIn(GetTransitionTree(outgoing, joining, context), incoming, false, context, name);
         ret.fundamentals = SequenceFundamentals.Compute([ret.child, incoming], context);
         return ret;
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         const res = this.child.AdvanceView(dt);
         this.curTime = this.curTime.Add(dt.Sub(res.remTime));
         const remTime = this.child.GetTimeRemaining();
@@ -234,19 +234,19 @@ export class AnimTreeLoopIn extends AnimTreeSingleChild {
         return res;
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         return this.child.GetTimeRemaining();
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         return this.fundamentals.steadyStateInfo;
     }
 
-    GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
+    public GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
         return this.child.GetContributionOfHighestInfluence();
     }
 
-    GetBestUnblendedChild(): IAnimReader | null {
+    public GetBestUnblendedChild(): IAnimReader | null {
         const bestChild = this.child.GetBestUnblendedChild();
         if (!bestChild)
             return null;
@@ -256,7 +256,7 @@ export class AnimTreeLoopIn extends AnimTreeSingleChild {
         return ret;
     }
 
-    Simplified(): IAnimReader | null {
+    public Simplified(): IAnimReader | null {
         const remTime = this.child.GetTimeRemaining();
         if (remTime.GreaterThanZero() && !remTime.EpsilonZero()) {
             const simp = this.child.Simplified();
@@ -268,7 +268,7 @@ export class AnimTreeLoopIn extends AnimTreeSingleChild {
         return null;
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         const ret = new AnimTreeLoopIn(this.child.Clone() as AnimTreeNode, this.incoming, this.didLoopIn, this.context,
             this.name, this.curTime);
         ret.fundamentals = this.fundamentals;
@@ -292,13 +292,13 @@ export class AnimTreeSequence extends AnimTreeSingleChild {
         super(child, name);
     }
 
-    static Create(sequence: IMetaAnim[], context: AnimSysContext, name: string): AnimTreeSequence {
+    public static Create(sequence: IMetaAnim[], context: AnimSysContext, name: string): AnimTreeSequence {
         const ret = new AnimTreeSequence(sequence[0].GetAnimationTree(context), sequence, context, name);
         ret.fundamentals = SequenceFundamentals.ComputeMeta(sequence, context);
         return ret;
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         let totalDelta = new CharAnimTime();
         const posDelta = vec3.create();
         const rotDelta = quat.create();
@@ -340,21 +340,21 @@ export class AnimTreeSequence extends AnimTreeSingleChild {
         return new AdvancementResults(dt.Sub(totalDelta), new AdvancementDeltas(posDelta, rotDelta, scaleDelta));
     }
 
-    GetTimeRemaining(): CharAnimTime {
-        if (this.curIdx == this.sequence.length - 1)
+    public GetTimeRemaining(): CharAnimTime {
+        if (this.curIdx === this.sequence.length - 1)
             return this.child.GetTimeRemaining();
         return this.fundamentals.steadyStateInfo.duration.Sub(this.curTime);
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         return this.fundamentals.steadyStateInfo;
     }
 
-    GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
+    public GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
         return this.child.GetContributionOfHighestInfluence();
     }
 
-    GetBestUnblendedChild(): IAnimReader | null {
+    public GetBestUnblendedChild(): IAnimReader | null {
         const bestChild = this.child.GetBestUnblendedChild();
         if (!bestChild)
             return null;
@@ -363,7 +363,7 @@ export class AnimTreeSequence extends AnimTreeSingleChild {
         return ret;
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         const ret = new AnimTreeSequence(this.child.Clone() as AnimTreeNode, this.sequence, this.context, this.name,
             this.curTime);
         ret.fundamentals = this.fundamentals;
@@ -390,15 +390,15 @@ export class ConstantAnimationTimeScale implements IVaryingAnimationTimeScale {
     constructor(private scale: number) {
     }
 
-    TimeScaleIntegral(lowerLimit: number, upperLimit: number): number {
+    public TimeScaleIntegral(lowerLimit: number, upperLimit: number): number {
         return (upperLimit - lowerLimit) * this.scale;
     }
 
-    FindUpperLimit(lowerLimit: number, root: number): number {
+    public FindUpperLimit(lowerLimit: number, root: number): number {
         return (root / this.scale) + lowerLimit;
     }
 
-    Clone(): IVaryingAnimationTimeScale {
+    public Clone(): IVaryingAnimationTimeScale {
         return new ConstantAnimationTimeScale(this.scale);
     }
 }
@@ -427,14 +427,14 @@ export class LinearAnimationTimeScale implements IVaryingAnimationTimeScale {
         return (upperLimit - lowerLimit) * 0.5 * (lowerEval + upperEval);
     }
 
-    TimeScaleIntegral(lowerLimit: number, upperLimit: number): number {
+    public TimeScaleIntegral(lowerLimit: number, upperLimit: number): number {
         if (lowerLimit <= upperLimit)
             return this.TimeScaleIntegralWithSortedLimits(lowerLimit, upperLimit);
         else
             return -this.TimeScaleIntegralWithSortedLimits(upperLimit, lowerLimit);
     }
 
-    FindUpperLimit(lowerLimit: number, root: number): number {
+    public FindUpperLimit(lowerLimit: number, root: number): number {
         const M = 0.5 * this.slope;
         let upperLimit = lowerLimit;
         const m = 2.0 * M;
@@ -449,7 +449,7 @@ export class LinearAnimationTimeScale implements IVaryingAnimationTimeScale {
         return -1.0;
     }
 
-    Clone(): IVaryingAnimationTimeScale {
+    public Clone(): IVaryingAnimationTimeScale {
         const y1 = this.slope * this.t1 + this.yIntercept;
         const y2 = this.slope * this.t2 + this.yIntercept;
         return new LinearAnimationTimeScale(new CharAnimTime(this.t1), y1, new CharAnimTime(this.t2), y2);
@@ -472,7 +472,7 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
         super(child, name);
     }
 
-    static Create(child: AnimTreeNode, timeScale: number, name: string): AnimTreeTimeScale {
+    public static Create(child: AnimTreeNode, timeScale: number, name: string): AnimTreeTimeScale {
         return new AnimTreeTimeScale(child, new ConstantAnimationTimeScale(timeScale), CharAnimTime.Infinity(), name);
     }
 
@@ -498,7 +498,7 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
         return ret;
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         if (dt.EqualsZero() && dt.Greater(new CharAnimTime()))
             return this.child.AdvanceView(dt);
 
@@ -527,7 +527,7 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
         }
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         const timeRem = this.child.GetTimeRemaining();
         if (this.targetIntegratedTime.Equals(CharAnimTime.Infinity()))
             return new CharAnimTime(this.timeScale.FindUpperLimit(this.curIntegratedTime.time, timeRem.time)).Sub(this.curIntegratedTime);
@@ -535,9 +535,9 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
             return this.GetRealLifeTime(timeRem);
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         const ssInfo = this.child.GetSteadyStateAnimInfo();
-        if (this.targetIntegratedTime == CharAnimTime.Infinity()) {
+        if (this.targetIntegratedTime === CharAnimTime.Infinity()) {
             return new SteadyStateAnimInfo(new CharAnimTime(
                 this.timeScale.FindUpperLimit(0.0, ssInfo.duration.time)), ssInfo.offset, ssInfo.looping);
         } else {
@@ -548,13 +548,13 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
         }
     }
 
-    GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
+    public GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
         const contrib = this.child.GetContributionOfHighestInfluence();
         return new AnimTreeEffectiveContribution(contrib.contributionWeight, contrib.name,
             this.GetSteadyStateAnimInfo(), this.GetTimeRemaining(), contrib.dbIndex);
     }
 
-    GetBestUnblendedChild(): IAnimReader | null {
+    public GetBestUnblendedChild(): IAnimReader | null {
         const bestChild = this.child.GetBestUnblendedChild();
         if (!bestChild)
             return null;
@@ -562,20 +562,20 @@ export class AnimTreeTimeScale extends AnimTreeSingleChild {
             this.targetIntegratedTime, this.name, this.curIntegratedTime, this.initialTime);
     }
 
-    Simplified(): IAnimReader | null {
+    public Simplified(): IAnimReader | null {
         const simp = this.child.Simplified();
         if (simp)
             return new AnimTreeTimeScale(simp as AnimTreeNode, this.timeScale.Clone(),
                 this.targetIntegratedTime, this.name, this.curIntegratedTime, this.initialTime);
 
-        if (this.curIntegratedTime == this.targetIntegratedTime) {
+        if (this.curIntegratedTime === this.targetIntegratedTime) {
             return this.child.Clone();
         }
 
         return null;
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimTreeTimeScale(this.child.Clone() as AnimTreeNode, this.timeScale.Clone(),
             this.targetIntegratedTime, this.name, this.curIntegratedTime, this.initialTime);
     }
@@ -593,9 +593,9 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
         super(left, right, name);
     }
 
-    abstract GetBlendingWeight(): number
+    public abstract GetBlendingWeight(): number
 
-    GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
         const w = this.GetBlendingWeight();
         if (w >= 1.0) {
             return this.right.GetPerSegmentData(indices, time);
@@ -605,18 +605,18 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
             let ret = new Array(indices.length);
             for (let i = 0; i < indices.length; ++i) {
                 const rotation = setA[i].rotation && setB[i].rotation ?
-                    quat.slerp(/*recycle*/setA[i].rotation!, setA[i].rotation!, setB[i].rotation!, w) : undefined;
+                    quat.slerp(/*recycle*/setA[i].rotation!, setA[i].rotation!, setB[i].rotation!, w) : null;
                 const translation = setA[i].translation && setB[i].translation ?
-                    vec3.lerp(/*recycle*/setA[i].translation!, setA[i].translation!, setB[i].translation!, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].translation!, setA[i].translation!, setB[i].translation!, w) : null;
                 const scale = setA[i].scale && setB[i].scale ?
-                    vec3.lerp(/*recycle*/setA[i].scale!, setA[i].scale!, setB[i].scale!, w) : undefined;
+                    vec3.lerp(/*recycle*/setA[i].scale!, setA[i].scale!, setB[i].scale!, w) : null;
                 ret[i] = new PerSegmentData(rotation, translation, scale);
             }
             return ret;
         }
     }
 
-    Simplified(): IAnimReader | null {
+    public Simplified(): IAnimReader | null {
         if (this.cullSelector === 0) {
             const simpA = this.left.Simplified();
             const simpB = this.right.Simplified();
@@ -635,7 +635,7 @@ export abstract class AnimTreeTweenBase extends AnimTreeDoubleChild {
         }
     }
 
-    GetRightChildWeight(): number {
+    public GetRightChildWeight(): number {
         return this.GetBlendingWeight();
     }
 }
@@ -652,7 +652,7 @@ export class AnimTreeBlend extends AnimTreeTweenBase {
         super(left, right, true, name);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         const resA = this.left.AdvanceView(dt);
         const resB = this.right.AdvanceView(dt);
 
@@ -665,13 +665,13 @@ export class AnimTreeBlend extends AnimTreeTweenBase {
         }
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         const remA = this.left.GetTimeRemaining();
         const remB = this.right.GetTimeRemaining();
         return remA.Less(remB) ? remB : remA;
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         const ssA = this.left.GetSteadyStateAnimInfo();
         const ssB = this.right.GetSteadyStateAnimInfo();
         const resOffset = vec3.create();
@@ -689,11 +689,11 @@ export class AnimTreeBlend extends AnimTreeTweenBase {
             resOffset, ssA.looping);
     }
 
-    GetBlendingWeight(): number {
+    public GetBlendingWeight(): number {
         return this.blendWeight;
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimTreeBlend(this.left.Clone() as AnimTreeNode, this.right.Clone() as AnimTreeNode,
             this.blendWeight, this.name);
     }
@@ -713,7 +713,7 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
         super(left, right, interpolateAdvancement, name);
     }
 
-    static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, transDur: CharAnimTime, runLeft: boolean,
+    public static Create(outgoing: AnimTreeNode, incoming: AnimTreeNode, transDur: CharAnimTime, runLeft: boolean,
                   interpolateAdvancement: boolean, name: string): AnimTreeTransition {
         return new AnimTreeTransition(outgoing, incoming, transDur, new CharAnimTime(), runLeft,
             false /* TODO(Cirrus): Use Loop POI */, interpolateAdvancement, name);
@@ -736,7 +736,7 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
         return new AdvancementResults(res.trueAdvancement, res.rightDeltas);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         if (dt.EqualsZero()) {
             this.right.AdvanceView(dt);
             if (this.runLeft)
@@ -766,26 +766,26 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
         return res;
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         const transTimeRem = this.transDur.Sub(this.timeInTrans);
         const rightTimeRem = this.right.GetTimeRemaining();
         return rightTimeRem.Less(transTimeRem) ? transTimeRem : rightTimeRem;
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         const bInfo = this.right.GetSteadyStateAnimInfo();
         if (this.transDur.Less(bInfo.duration))
             return new SteadyStateAnimInfo(bInfo.duration, bInfo.offset, bInfo.looping);
         return new SteadyStateAnimInfo(this.transDur, bInfo.offset, bInfo.looping);
     }
 
-    GetBlendingWeight(): number {
+    public GetBlendingWeight(): number {
         if (this.transDur.GreaterThanZero())
             return this.timeInTrans.time / this.transDur.time;
         return 0.0;
     }
 
-    Simplified(): IAnimReader | null {
+    public Simplified(): IAnimReader | null {
         if (compareEpsilon(this.GetBlendingWeight(), 1.0)) {
             const simp = this.right.Simplified();
             if (simp)
@@ -795,7 +795,7 @@ export class AnimTreeTransition extends AnimTreeTweenBase {
         return super.Simplified();
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimTreeTransition(this.left.Clone() as AnimTreeNode, this.right.Clone() as AnimTreeNode,
             this.transDur, this.timeInTrans, this.runLeft, this.loopLeft, this.interpolateAdvancement, this.name);
     }
@@ -816,36 +816,36 @@ export class AnimTreeAnimReaderContainer extends AnimTreeNode {
         super(name);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         return this.reader.AdvanceView(dt);
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         return this.reader.GetTimeRemaining();
     }
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         return this.reader.GetSteadyStateAnimInfo();
     }
 
-    GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
+    public GetContributionOfHighestInfluence(): AnimTreeEffectiveContribution {
         return new AnimTreeEffectiveContribution(1.0, this.name, this.GetSteadyStateAnimInfo(),
             this.GetTimeRemaining(), this.animDbIdx);
     }
 
-    GetBestUnblendedChild(): IAnimReader | null {
+    public GetBestUnblendedChild(): IAnimReader | null {
         return null;
     }
 
-    GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
         return this.reader.GetPerSegmentData(indices, time);
     }
 
-    SetPhase(phase: number) {
+    public SetPhase(phase: number) {
         this.reader.SetPhase(phase);
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimTreeAnimReaderContainer(this.name, this.reader.Clone(), this.animDbIdx);
     }
 }

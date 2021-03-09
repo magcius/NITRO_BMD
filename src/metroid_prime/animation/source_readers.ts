@@ -17,19 +17,19 @@ export abstract class AnimSourceReaderBase extends IAnimReader {
 
     // TODO(Cirrus): EVNT data reference
 
-    GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
+    public GetSteadyStateAnimInfo(): SteadyStateAnimInfo {
         return this.steadyStateInfo;
     }
 
-    PostConstruct(time: CharAnimTime) {
+    public PostConstruct(time: CharAnimTime) {
 
     }
 
-    UpdatePOIStates() {
+    public UpdatePOIStates() {
 
     }
 
-    SetPhase(phase: number) {
+    public SetPhase(phase: number) {
         this.curTime = this.steadyStateInfo.duration.MulFactor(phase);
         this.UpdatePOIStates();
         if (!this.curTime.GreaterThanZero()) {
@@ -48,7 +48,7 @@ export class AnimSourceReader extends AnimSourceReaderBase {
         this.PostConstruct(time);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         if (this.curTime.GreaterEqual(this.source.duration)) {
             this.curTime = new CharAnimTime();
             this.passedBoolIdx = 0;
@@ -72,7 +72,7 @@ export class AnimSourceReader extends AnimSourceReaderBase {
             let results = new AdvancementResults(remTime);
 
             const rootId = this.source.rootBone;
-            let rb = undefined;
+            let rb;
             if (this.source.HasRotation(rootId)) {
                 const ra = this.source.GetRotation(rootId, prevTime);
                 quat.conjugate(ra, ra);
@@ -101,15 +101,15 @@ export class AnimSourceReader extends AnimSourceReaderBase {
         }
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         return this.source.duration.Sub(this.curTime);
     }
 
-    GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
         return this.source.GetPerSegmentData(indices, time ? time : this.curTime);
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimSourceReader(this.source, this.curTime);
     }
 }
@@ -127,7 +127,7 @@ class StreamedAnimReaderTotals {
         this.Initialize();
     }
 
-    Initialize() {
+    public Initialize() {
         this.currentKey = 0;
         this.calculated = false;
 
@@ -150,7 +150,7 @@ class StreamedAnimReaderTotals {
         }
     }
 
-    IncrementInto(loader: BitLevelLoader, dest: StreamedAnimReaderTotals) {
+    public IncrementInto(loader: BitLevelLoader, dest: StreamedAnimReaderTotals) {
         dest.calculated = false;
 
         for (let i = 0; i < this.source.boneChannelCount; ++i) {
@@ -189,7 +189,7 @@ class StreamedAnimReaderTotals {
         dest.currentKey = this.currentKey + 1;
     }
 
-    CalculateDown() {
+    public CalculateDown() {
         const rq = Math.PI / 2.0 / this.source.rotationDiv;
         const tq = this.source.translationMult;
         const sq = this.source.scaleMult ? this.source.scaleMult : 0.0;
@@ -228,7 +228,7 @@ class StreamedAnimReaderTotals {
         this.calculated = true;
     }
 
-    GetRotation(idx: number): quat {
+    public GetRotation(idx: number): quat {
         const base = idx * 10;
         return quat.fromValues(
             this.cumulativeFloats[base + 1],
@@ -237,7 +237,7 @@ class StreamedAnimReaderTotals {
             this.cumulativeFloats[base]);
     }
 
-    GetTranslation(idx: number): vec3 {
+    public GetTranslation(idx: number): vec3 {
         const base = idx * 10 + 4;
         return vec3.fromValues(
             this.cumulativeFloats[base],
@@ -245,7 +245,7 @@ class StreamedAnimReaderTotals {
             this.cumulativeFloats[base + 2]);
     }
 
-    GetScale(idx: number): vec3 {
+    public GetScale(idx: number): vec3 {
         const base = idx * 10 + 7;
         return vec3.fromValues(
             this.cumulativeFloats[base],
@@ -273,7 +273,7 @@ class StreamedPairOfTotals {
         return this.flip ? this.b : this.a;
     }
 
-    SetTime(loader: BitLevelLoader, time: CharAnimTime) {
+    public SetTime(loader: BitLevelLoader, time: CharAnimTime) {
         let priorTime = new CharAnimTime();
         let curTime = new CharAnimTime();
 
@@ -289,7 +289,7 @@ class StreamedPairOfTotals {
                     priorTime = curTime;
                 } else if (curTime.Greater(time)) {
                     next = cur;
-                    if (prior == -1) {
+                    if (prior === -1) {
                         prior = cur;
                         priorTime = curTime;
                         this.t = 0.0;
@@ -323,19 +323,19 @@ class StreamedPairOfTotals {
             this.next.CalculateDown();
     }
 
-    GetRotation(idx: number): quat {
+    public GetRotation(idx: number): quat {
         const quatA = this.prior.GetRotation(idx);
         const quatB = this.next.GetRotation(idx);
         return quat.slerp(quat.create(), quatA, quatB, this.t);
     }
 
-    GetTranslation(idx: number): vec3 {
+    public GetTranslation(idx: number): vec3 {
         const transA = this.prior.GetTranslation(idx);
         const transB = this.next.GetTranslation(idx);
         return vec3.lerp(vec3.create(), transA, transB, this.t);
     }
 
-    GetScale(idx: number): vec3 {
+    public GetScale(idx: number): vec3 {
         const scaleA = this.prior.GetScale(idx);
         const scaleB = this.next.GetScale(idx);
         return vec3.lerp(vec3.create(), scaleA, scaleB, this.t);
@@ -348,11 +348,11 @@ class BitLevelLoader {
     constructor(private data: Uint32Array) {
     }
 
-    Reset() {
+    public Reset() {
         this.bitIdx = 0;
     }
 
-    LoadSigned(q: number): number {
+    public LoadSigned(q: number): number {
         const wordCur = (this.bitIdx / 32) >>> 0;
         const bitRem = (this.bitIdx % 32) >>> 0;
 
@@ -373,7 +373,7 @@ class BitLevelLoader {
         return tempBuf;
     }
 
-    LoadBool(): boolean {
+    public LoadBool(): boolean {
         const wordCur = (this.bitIdx / 32) >>> 0;
         const bitRem = (this.bitIdx % 32) >>> 0;
 
@@ -401,7 +401,7 @@ class SegIdToIndexConverter {
         }
     }
 
-    SegIdToIndex(seg: number): number | undefined {
+    public SegIdToIndex(seg: number): number | undefined {
         const idx = this.indices[seg];
         return idx !== -1 ? idx : undefined;
     }
@@ -464,7 +464,7 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
         return this.totals.GetScale(idx);
     }
 
-    AdvanceView(dt: CharAnimTime): AdvancementResults {
+    public AdvanceView(dt: CharAnimTime): AdvancementResults {
         const animDur = new CharAnimTime(this.source.duration);
         if (this.curTime.Equals(animDur)) {
             this.curTime = new CharAnimTime();
@@ -510,31 +510,31 @@ export class AnimSourceReaderCompressed extends AnimSourceReaderBase {
         }
     }
 
-    GetTimeRemaining(): CharAnimTime {
+    public GetTimeRemaining(): CharAnimTime {
         return new CharAnimTime(this.source.duration).Sub(this.curTime);
     }
 
-    GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[] {
         let ret = new Array(indices.length);
         this.totals.SetTime(this.bitLoader, time ? time : this.curTime);
 
         for (let i = 0; i < indices.length; ++i) {
             const seg = indices[i];
-            const rotation = this.HasRotation(seg) ? this.GetRotation(seg) : undefined;
-            const translation = this.HasTranslation(seg) ? this.GetTranslation(seg) : undefined;
-            const scale = this.HasScale(seg) ? this.GetScale(seg) : undefined;
+            const rotation = this.HasRotation(seg) ? this.GetRotation(seg) : null;
+            const translation = this.HasTranslation(seg) ? this.GetTranslation(seg) : null;
+            const scale = this.HasScale(seg) ? this.GetScale(seg) : null;
             ret[i] = new PerSegmentData(rotation, translation, scale);
         }
 
         return ret;
     }
 
-    SetPhase(phase: number) {
+    public SetPhase(phase: number) {
         super.SetPhase(phase);
         this.totals.SetTime(this.bitLoader, this.curTime);
     }
 
-    Clone(): IAnimReader {
+    public Clone(): IAnimReader {
         return new AnimSourceReaderCompressed(this.source, this.curTime);
     }
 }

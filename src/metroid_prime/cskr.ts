@@ -15,7 +15,7 @@ export class CSKR {
     constructor(public skinRules: SkinRule[], public envelopeSets?: number[]) {
     }
 
-    vertexIndexToSkinIndex(vertIndex: number): number {
+    public vertexIndexToSkinIndex(vertIndex: number): number {
         let vertexAccum = 0;
         for (let i = 0; i < this.skinRules.length; ++i) {
             const rule = this.skinRules[i];

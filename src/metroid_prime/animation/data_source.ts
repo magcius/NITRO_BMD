@@ -8,9 +8,9 @@ import { PerSegmentData } from "./base_reader";
 import { nArray } from "../../util";
 
 class KeyStorage {
-    scaleKeys: ReadonlyVec3[];
-    rotationKeys: ReadonlyQuat[];
-    translationKeys: ReadonlyVec3[];
+    private scaleKeys: ReadonlyVec3[] | null = null;
+    private rotationKeys: ReadonlyQuat[];
+    private translationKeys: ReadonlyVec3[];
 
     constructor(stream: InputStream, private frameCount: number, mp2: boolean) {
         if (mp2)
@@ -19,15 +19,15 @@ class KeyStorage {
         this.translationKeys = nArray(stream.readUint32(), () => stream.readVec3(vec3.create()));
     }
 
-    GetScale(frameIdx: number, scaleIdx: number): ReadonlyVec3 {
-        return this.scaleKeys[this.frameCount * scaleIdx + Math.min(frameIdx, this.frameCount - 1)];
+    public GetScale(frameIdx: number, scaleIdx: number): ReadonlyVec3 {
+        return this.scaleKeys![this.frameCount * scaleIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 
-    GetRotation(frameIdx: number, rotIdx: number): ReadonlyQuat {
+    public GetRotation(frameIdx: number, rotIdx: number): ReadonlyQuat {
         return this.rotationKeys[this.frameCount * rotIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 
-    GetTranslation(frameIdx: number, transIdx: number): ReadonlyVec3 {
+    public GetTranslation(frameIdx: number, transIdx: number): ReadonlyVec3 {
         return this.translationKeys[this.frameCount * transIdx + Math.min(frameIdx, this.frameCount - 1)];
     }
 }
@@ -82,7 +82,7 @@ export class AnimSource {
         return {frame: frameIdx, t: t};
     }
 
-    GetScale(seg: number, time: CharAnimTime): vec3 {
+    public GetScale(seg: number, time: CharAnimTime): vec3 {
         // MP2 only
         if (!this.scaleChannels)
             return vec3.create();
@@ -101,7 +101,7 @@ export class AnimSource {
         return vec3.lerp(vec3.create(), vecA, vecB, frameAndT.t);
     }
 
-    GetRotation(seg: number, time: CharAnimTime): quat {
+    public GetRotation(seg: number, time: CharAnimTime): quat {
         const boneIndex = this.boneChannels[seg];
         if (boneIndex === 0xff)
             return quat.create();
@@ -121,7 +121,7 @@ export class AnimSource {
         return quat.slerp(quat.create(), quatA, quatB, frameAndT.t);
     }
 
-    GetTranslation(seg: number, time: CharAnimTime): vec3 {
+    public GetTranslation(seg: number, time: CharAnimTime): vec3 {
         const boneIndex = this.boneChannels[seg];
         if (boneIndex === 0xff)
             return vec3.create();
@@ -137,7 +137,7 @@ export class AnimSource {
         return vec3.lerp(vec3.create(), vecA, vecB, frameAndT.t);
     }
 
-    HasScale(seg: number): boolean {
+    public HasScale(seg: number): boolean {
         const boneIndex = this.boneChannels[seg];
         if (boneIndex === 0xff)
             return false;
@@ -146,7 +146,7 @@ export class AnimSource {
         return this.scaleChannels[boneIndex] !== 0xff;
     }
 
-    HasRotation(seg: number): boolean {
+    public HasRotation(seg: number): boolean {
         const boneIndex = this.boneChannels[seg];
         if (boneIndex === 0xff)
             return false;
@@ -155,21 +155,21 @@ export class AnimSource {
         return this.rotationChannels[boneIndex] !== 0xff;
     }
 
-    HasTranslation(seg: number): boolean {
+    public HasTranslation(seg: number): boolean {
         const boneIndex = this.boneChannels[seg];
         if (boneIndex === 0xff)
             return false;
         return this.translationChannels[boneIndex] !== 0xff;
     }
 
-    GetPerSegmentData(indices: number[], time: CharAnimTime): PerSegmentData[] {
+    public GetPerSegmentData(indices: number[], time: CharAnimTime): PerSegmentData[] {
         let ret = new Array(indices.length);
 
         for (let i = 0; i < indices.length; ++i) {
             const seg = indices[i];
-            const rotation = this.HasRotation(seg) ? this.GetRotation(seg, time) : undefined;
-            const translation = this.HasTranslation(seg) ? this.GetTranslation(seg, time) : undefined;
-            const scale = this.HasScale(seg) ? this.GetScale(seg, time) : undefined;
+            const rotation = this.HasRotation(seg) ? this.GetRotation(seg, time) : null;
+            const translation = this.HasTranslation(seg) ? this.GetTranslation(seg, time) : null;
+            const scale = this.HasScale(seg) ? this.GetScale(seg, time) : null;
             ret[i] = new PerSegmentData(rotation, translation, scale);
         }
 
@@ -198,7 +198,7 @@ class BoneAttributeDescriptor {
         }
     }
 
-    TotalBits(): number {
+    public TotalBits(): number {
         return this.bitsX + this.bitsY + this.bitsZ;
     }
 }
@@ -216,14 +216,14 @@ class BoneChannelDescriptor {
         this.scale = mp2 ? new BoneAttributeDescriptor(stream) : new BoneAttributeDescriptor();
     }
 
-    TotalBits(): number {
+    public TotalBits(): number {
         return (this.rotation.keyCount ? 1 : 0) +
             this.rotation.TotalBits() +
             this.translation.TotalBits() +
             this.scale.TotalBits();
     }
 
-    MaxKeyCount(): number {
+    public MaxKeyCount(): number {
         return Math.max(this.rotation.keyCount, this.translation.keyCount, this.scale.keyCount);
     }
 }

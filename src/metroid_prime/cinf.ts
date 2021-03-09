@@ -73,11 +73,11 @@ export class CINF {
         }
     }
 
-    getFromParentUnrotated(boneId: number): ReadonlyVec3 {
+    public getFromParentUnrotated(boneId: number): ReadonlyVec3 {
         return this.bones.get(boneId)!.originFromParent;
     }
 
-    getFromRootUnrotated(boneId: number): ReadonlyVec3 {
+    public getFromRootUnrotated(boneId: number): ReadonlyVec3 {
         return this.bones.get(boneId)!.origin;
     }
 }

@@ -272,7 +272,7 @@ class MaterialGroupInstance {
             renderInst.sortKey = setSortKeyBias(renderInst.sortKey, this.material.sortBias);
     }
 
-    public prepareToRender(renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput, modelMatrix: mat4, isSkybox: boolean, actorLights: ActorLights | null, worldAmbientColor: Color, envelopeModelMatrices?: (mat4|null)[]): void {
+    public prepareToRender(renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput, modelMatrix: mat4, isSkybox: boolean, actorLights: ActorLights | null, worldAmbientColor: Color, envelopeModelMatrices: (mat4|null)[] = []): void {
         this.materialParamsBlockOffs = this.materialHelper.allocateMaterialParamsBlock(renderInstManager);
 
         colorCopy(materialParams.u_Color[ColorKind.MAT0], White);
@@ -392,41 +392,39 @@ class MaterialGroupInstance {
         // The first non-null matrix of envelopeModelMatrices is assumed to be in the same index as the
         // selected UV animation. Subsequent matrices use that same UV animation as a template for different
         // transforms.
-        if (envelopeModelMatrices) {
-            assert(materialParams.u_TexMtx.length >= envelopeModelMatrices.length);
-            let envelopeUVAnimation: UVAnimation|null = null;
-            for (let i = 0; i < envelopeModelMatrices.length; i++) {
-                const envelopeModelMatrix = envelopeModelMatrices[i];
-                if (!envelopeModelMatrix)
-                    continue;
-                if (envelopeUVAnimation === null)
-                    envelopeUVAnimation = assertExists(this.material.uvAnimations[i]);
+        assert(materialParams.u_TexMtx.length >= envelopeModelMatrices.length);
+        let envelopeUVAnimation: UVAnimation|null = null;
+        for (let i = 0; i < envelopeModelMatrices.length; i++) {
+            const envelopeModelMatrix = envelopeModelMatrices[i];
+            if (!envelopeModelMatrix)
+                continue;
+            if (envelopeUVAnimation === null)
+                envelopeUVAnimation = assertExists(this.material.uvAnimations[i]);
 
-                const texMtx = materialParams.u_TexMtx[i];
-                mat4.identity(texMtx);
+            const texMtx = materialParams.u_TexMtx[i];
+            mat4.identity(texMtx);
 
-                // We only consider position-dependent UV animations and ignore the postMtx entirely.
-                if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_NO_TRANS) {
-                    mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
-                    computeNormalMatrix(texMtx, texMtx);
-                } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING) {
-                    mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
-                    computeNormalMatrix(texMtx, texMtx);
-                    mat4.invert(scratchMatrix, viewerInput.camera.viewMatrix);
-                    vec3.set(scratchVec3, envelopeModelMatrix[12], envelopeModelMatrix[13], envelopeModelMatrix[14]);
-                    vec3.transformMat4(scratchVec3, scratchVec3, scratchMatrix);
-                    texMtx[12] = scratchVec3[0];
-                    texMtx[13] = scratchVec3[1];
-                    texMtx[14] = scratchVec3[2];
-                } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_MODEL) {
-                    mat4.copy(texMtx, envelopeModelMatrix);
-                    texMtx[12] = 0;
-                    texMtx[13] = 0;
-                    texMtx[14] = 0;
-                } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_CYLINDER) {
-                    mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
-                    computeNormalMatrix(texMtx, texMtx);
-                }
+            // We only consider position-dependent UV animations and ignore the postMtx entirely.
+            if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_NO_TRANS) {
+                mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
+                computeNormalMatrix(texMtx, texMtx);
+            } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING) {
+                mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
+                computeNormalMatrix(texMtx, texMtx);
+                mat4.invert(scratchMatrix, viewerInput.camera.viewMatrix);
+                vec3.set(scratchVec3, envelopeModelMatrix[12], envelopeModelMatrix[13], envelopeModelMatrix[14]);
+                vec3.transformMat4(scratchVec3, scratchVec3, scratchMatrix);
+                texMtx[12] = scratchVec3[0];
+                texMtx[13] = scratchVec3[1];
+                texMtx[14] = scratchVec3[2];
+            } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_MODEL) {
+                mat4.copy(texMtx, envelopeModelMatrix);
+                texMtx[12] = 0;
+                texMtx[13] = 0;
+                texMtx[14] = 0;
+            } else if (envelopeUVAnimation.type === UVAnimationType.ENV_MAPPING_CYLINDER) {
+                mat4.mul(texMtx, viewerInput.camera.viewMatrix, envelopeModelMatrix);
+                computeNormalMatrix(texMtx, texMtx);
             }
         }
 
@@ -646,18 +644,18 @@ export class MREARenderer {
 
             for (let j = 0; j < scriptLayer.entities.length; j++) {
                 const ent = scriptLayer.entities[j];
-                let [model, animationData] = ent.getRenderModel(resourceSystem);
+                let { cmdl, animationData } = ent.getRenderModel(resourceSystem);
 
                 // Don't animate doors for now
                 if (ent.type === MP1EntityType.Door)
-                    animationData = undefined;
+                    animationData = null;
 
-                if (model !== null) {
+                if (cmdl !== null) {
                     const aabb = new AABB();
-                    aabb.transform(model.bbox, ent.modelMatrix);
+                    aabb.transform(cmdl.bbox, ent.modelMatrix);
 
                     const actorLights = new ActorLights(aabb, ent.lightParams, this.mrea);
-                    const cmdlData = modelCache.getCMDLData(device, this.textureHolder, cache, model);
+                    const cmdlData = modelCache.getCMDLData(device, this.textureHolder, cache, cmdl);
                     const cmdlRenderer = new CMDLRenderer(device, this.textureHolder, actorLights, ent.name, ent.modelMatrix, cmdlData, animationData);
                     const actor = new Actor(ent, cmdlRenderer);
                     this.actors.push(actor);
@@ -674,7 +672,7 @@ export class MREARenderer {
                             const modelMatrix = mat4.create();
 
                             const skyData = modelCache.getCMDLData(device, this.textureHolder, cache, areaAttributes.overrideSky);
-                            this.overrideSky = new CMDLRenderer(device, this.textureHolder, null, `Sky_AreaAttributes_Layer${i}`, modelMatrix, skyData);
+                            this.overrideSky = new CMDLRenderer(device, this.textureHolder, null, `Sky_AreaAttributes_Layer${i}`, modelMatrix, skyData, null);
                             this.overrideSky.isSkybox = true;
                         }
                     }
@@ -773,7 +771,7 @@ export class CMDLRenderer {
     private pose?: PoseAsTransforms;
     private envelopeMats?: mat4[];
 
-    constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData, public animationData?: AnimationData) {
+    constructor(device: GfxDevice, public textureHolder: RetroTextureHolder, public actorLights: ActorLights | null, public name: string, modelMatrix: mat4 | null, public cmdlData: CMDLData, public animationData: AnimationData | null) {
         const materialSet = this.cmdlData.cmdl.materialSets[0];
 
         // First, create our group commands. These will store UBO buffer data which is shared between

@@ -214,7 +214,7 @@ class RetroSceneDesc implements Viewer.SceneDesc {
             if (defaultSkyboxCMDL) {
                 const defaultSkyboxName = resourceSystem.findResourceNameByID(mlvl.defaultSkyboxID);
                 const defaultSkyboxCMDLData = renderer.modelCache.getCMDLData(device, renderer.textureHolder, cache, defaultSkyboxCMDL);
-                const defaultSkyboxRenderer = new CMDLRenderer(device, renderer.textureHolder, null, defaultSkyboxName, mat4.create(), defaultSkyboxCMDLData);
+                const defaultSkyboxRenderer = new CMDLRenderer(device, renderer.textureHolder, null, defaultSkyboxName, mat4.create(), defaultSkyboxCMDLData, null);
                 defaultSkyboxRenderer.isSkybox = true;
                 renderer.defaultSkyRenderer = defaultSkyboxRenderer;
             }

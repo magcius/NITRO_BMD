@@ -7,14 +7,14 @@ export class AdvancementDeltas {
                 public scaleDelta: vec3 = vec3.create()) {
     }
 
-    static Blend(a: AdvancementDeltas, b: AdvancementDeltas, t: number): AdvancementDeltas {
+    public static Blend(a: AdvancementDeltas, b: AdvancementDeltas, t: number): AdvancementDeltas {
         return new AdvancementDeltas(
             vec3.lerp(vec3.create(), a.translationDelta, b.translationDelta, t),
             quat.lerp(quat.create(), a.rotationDelta, b.rotationDelta, t),
             vec3.lerp(vec3.create(), a.scaleDelta, b.scaleDelta, t));
     }
 
-    static Interpolate(a: AdvancementDeltas, b: AdvancementDeltas, wa: number, wb: number): AdvancementDeltas {
+    public static Interpolate(a: AdvancementDeltas, b: AdvancementDeltas, wa: number, wb: number): AdvancementDeltas {
         return AdvancementDeltas.Blend(a, b, (wa + wb) * 0.5);
     }
 }
@@ -33,9 +33,9 @@ export class DoubleChildAdvancementResults {
 }
 
 export class PerSegmentData {
-    constructor(public rotation?: quat,
-                public translation?: vec3,
-                public scale?: vec3) {
+    constructor(public rotation: quat | null,
+                public translation: vec3 | null,
+                public scale: vec3 | null) {
     }
 }
 
@@ -50,22 +50,22 @@ export class SteadyStateAnimInfo {
  * Basis of intermediate tree nodes and animation source readers (ANIM resource reader)
  */
 export abstract class IAnimReader {
-    abstract AdvanceView(dt: CharAnimTime): AdvancementResults;
+    public abstract AdvanceView(dt: CharAnimTime): AdvancementResults;
 
-    abstract GetTimeRemaining(): CharAnimTime;
+    public abstract GetTimeRemaining(): CharAnimTime;
 
-    abstract GetSteadyStateAnimInfo(): SteadyStateAnimInfo;
+    public abstract GetSteadyStateAnimInfo(): SteadyStateAnimInfo;
 
-    abstract GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[];
+    public abstract GetPerSegmentData(indices: number[], time?: CharAnimTime): PerSegmentData[];
 
-    abstract SetPhase(phase: number): void;
+    public abstract SetPhase(phase: number): void;
 
-    abstract Clone(): IAnimReader;
+    public abstract Clone(): IAnimReader;
 
     /**
      * Periodically called to cull out completed transition nodes
      */
-    Simplified(): IAnimReader | null {
+    public Simplified(): IAnimReader | null {
         return null;
     }
 }

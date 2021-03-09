@@ -614,7 +614,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
         const normalY = stream.readFloat32();
         const normalZ = stream.readFloat32();
 
-        let sourceEnvelopeIdx: number | undefined = undefined;
+        let sourceEnvelopeIdx: number | null = null;
         if (isEchoes) {
             sourceEnvelopeIdx = stream.readUint16();
             stream.skip(2);
@@ -768,7 +768,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     draw.texMatrixTable[posMtxIdxToTexMtxIdx(surfaceSkinIndex)] = skinIdx;
                 draw.posMatrixTable[surfaceSkinIndex] = skinIdx;
             }
-        } else if (sourceEnvelopeIdx !== undefined && cskr) {
+        } else if (sourceEnvelopeIdx !== null && cskr) {
             // MP2 already has generated envelope sets for skinning - resolve the matrices via the CSKR
             const draw = loadedVertexData.draws[0];
             draw.posMatrixTable = assertExists(cskr.envelopeSets).slice(sourceEnvelopeIdx * 10, (sourceEnvelopeIdx + 1) * 10);

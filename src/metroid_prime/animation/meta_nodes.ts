@@ -137,7 +137,7 @@ export class MetaAnimPlay implements IMetaAnim {
         return new AnimSourceReaderCompressed(anim.source, startTime);
     }
 
-    GetAnimationTree(context: AnimSysContext): AnimTreeNode {
+    public GetAnimationTree(context: AnimSysContext): AnimTreeNode {
         const anim = context.resourceSystem.loadAssetByID<ANIM>(this.animID, "ANIM");
         return new AnimTreeAnimReaderContainer(this.animName,
             MetaAnimPlay.GetNewReader(anim!, this.startTime), this.animDbIdx);
@@ -159,7 +159,7 @@ export class MetaAnimBlend implements IMetaAnim {
         stream.readBool();
     }
 
-    GetAnimationTree(context: AnimSysContext): AnimTreeNode {
+    public GetAnimationTree(context: AnimSysContext): AnimTreeNode {
         const left = this.left.GetAnimationTree(context);
         const right = this.right.GetAnimationTree(context);
         return new AnimTreeBlend(left, right, this.blend,
@@ -176,7 +176,7 @@ export class MetaAnimPhaseBlend extends MetaAnimBlend {
         super(stream);
     }
 
-    GetAnimationTree(context: AnimSysContext): AnimTreeNode {
+    public GetAnimationTree(context: AnimSysContext): AnimTreeNode {
         const left = this.left.GetAnimationTree(context);
         const right = this.right.GetAnimationTree(context);
         const durLeft = left.GetContributionOfHighestInfluence().steadyStateInfo.duration;
@@ -216,7 +216,7 @@ export class MetaAnimRandom implements IMetaAnim {
         }
     }
 
-    GetAnimationTree(context: AnimSysContext): AnimTreeNode {
+    public GetAnimationTree(context: AnimSysContext): AnimTreeNode {
         const r = randomRange(1, 100);
         let useRd: RandomData;
         for (const rd of this.randomData) {
@@ -243,7 +243,7 @@ export class MetaAnimSequence implements IMetaAnim {
         }
     }
 
-    GetAnimationTree(context: AnimSysContext): AnimTreeNode {
+    public GetAnimationTree(context: AnimSysContext): AnimTreeNode {
         return AnimTreeSequence.Create(this.sequence, context, "MetaAnimSequence");
     }
 }
@@ -291,7 +291,7 @@ export class MetaTransMetaAnim implements IMetaTrans {
         this.joiningAnim = CreateMetaAnim(stream);
     }
 
-    GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
+    public GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
         const joiningAnim = this.joiningAnim.GetAnimationTree(context);
         return AnimTreeLoopIn.Create(outgoing, incoming, joiningAnim, context,
             `MetaTransMetaAnim(${outgoing.name}, ${incoming.name}, ${joiningAnim.name})`);
@@ -313,7 +313,7 @@ export class MetaTransTrans implements IMetaTrans {
         this.interpolateAdvancement = (stream.readUint32() & 0x1) !== 0;
     }
 
-    GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
+    public GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
         return AnimTreeTransition.Create(outgoing, incoming, this.transDur, this.runLeft, this.interpolateAdvancement,
             `MetaTransTrans(${outgoing.name}, ${incoming.name}, ${this.transDur.time})`);
     }
@@ -328,7 +328,7 @@ export class MetaTransPhaseTrans extends MetaTransTrans {
         super(stream);
     }
 
-    GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
+    public GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
         const contribOutgoing = outgoing.GetContributionOfHighestInfluence();
         const contribIncoming = incoming.GetContributionOfHighestInfluence();
         const outOverIn = contribOutgoing.steadyStateInfo.duration.Div(contribIncoming.steadyStateInfo.duration);
@@ -351,7 +351,7 @@ export class MetaTransPhaseTrans extends MetaTransTrans {
  * The simplest form of transition :3
  */
 export class MetaTransSnap implements IMetaTrans {
-    GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
+    public GetTransitionTree(outgoing: AnimTreeNode, incoming: AnimTreeNode, context: AnimSysContext): AnimTreeNode {
         return incoming;
     }
 }

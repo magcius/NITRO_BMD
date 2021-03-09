@@ -100,6 +100,11 @@ export class LightParameters {
     public maxAreaLights: Number = 4;
 }
 
+export interface RenderModel {
+    cmdl: CMDL | null;
+    animationData : AnimationData | null;
+}
+
 export class Entity {
     public name: string;
     public active: boolean = true;
@@ -117,7 +122,7 @@ export class Entity {
     public readProperty_MP2(stream: InputStream, resourceSystem: ResourceSystem, propertyID: number) {
     }
 
-    public getRenderModel(resourceSystem: ResourceSystem): [CMDL | null, AnimationData?] {
+    public getRenderModel(resourceSystem: ResourceSystem): RenderModel {
         if (this.animParams !== null) {
             let charID = this.animParams.charID;
             const animID = this.animParams.animID;
@@ -132,22 +137,22 @@ export class Entity {
                         const anim = ancs.animationSet.animations.find(v => v.name == animName);
                         const metaAnim = anim?.animation;
                         if (metaAnim) {
-                            return [model, {
+                            return { cmdl: model, animationData: {
                                 cskr: assertExists(model.cskr),
                                 cinf: assertExists(character.skel),
                                 metaAnim: metaAnim,
-                                animSysContext: new AnimSysContext(ancs.animationSet.transitionDatabase, resourceSystem)}];
+                                animSysContext: new AnimSysContext(ancs.animationSet.transitionDatabase, resourceSystem)}};
                         }
                     }
-                    return [model];
+                    return { cmdl: model, animationData: null };
                 }
             } 
         }
 
         if (this.char !== null && this.char.cmdl !== null)
-            return [this.char.cmdl];
+            return { cmdl: this.char.cmdl, animationData: null };
 
-        return [this.model];
+        return { cmdl: this.model, animationData: null };
     }
 }
 
