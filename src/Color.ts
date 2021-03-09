@@ -1,6 +1,6 @@
 
 import { lerp, saturate, clamp } from "./MathHelpers";
-import { assert } from "./util";
+import { assert, mod } from "./util";
 
 // Color utilities
 
@@ -134,10 +134,6 @@ export function colorToCSS(src: Color, a: number = src.a): string {
 
 export function colorEqual(c0: Color, c1: Color): boolean {
     return c0.r === c1.r && c0.g === c1.g && c0.b === c1.b && c0.a === c1.a;
-}
-
-function mod(a: number, b: number): number {
-    return (a + b) % b;
 }
 
 function piecewiseHSL(m0: number, m1: number, t: number) {

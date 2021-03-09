@@ -2,7 +2,7 @@ import { vec3, vec4 } from "gl-matrix";
 import { TileState } from '../Common/N64/RDP';
 import { GfxTexture } from '../gfx/platform/GfxPlatform';
 import { clamp, lerp } from '../MathHelpers';
-import { getPointBasis, getPointBezier, getPointHermite, getDerivativeBezier, getDerivativeBasis, getDerivativeHermite } from '../Spline';
+import { getPointBspline, getPointBezier, getPointHermite, getDerivativeBezier, getDerivativeBspline, getDerivativeHermite } from '../Spline';
 import { TextureMapping } from '../TextureHolder';
 import { assert, assertExists, nArray } from '../util';
 import { AnimationTrack, ColorFlagStart, DataMap, EntryKind, MaterialData, MaterialFlags, Path, PathKind, GFXNode } from './room';
@@ -123,7 +123,7 @@ export function getPathPoint(dst: vec3, path: Path, t: number, useRaw = false): 
         } break;
         case PathKind.BSpline: {
             for (let i = 0; i < 3; i++)
-                dst[i] = getPointBasis(path.points[offs + i], path.points[offs + 3 + i], path.points[offs + 6 + i], path.points[offs + 9 + i], frac);
+                dst[i] = getPointBspline(path.points[offs + i], path.points[offs + 3 + i], path.points[offs + 6 + i], path.points[offs + 9 + i], frac);
         } break;
         case PathKind.Hermite: {
             for (let i = 0; i < 3; i++)
@@ -155,7 +155,7 @@ export function getPathTangent(dst: vec3, path: Path, t: number): void {
         } break;
         case PathKind.BSpline: {
             for (let i = 0; i < 3; i++)
-                dst[i] = getDerivativeBasis(path.points[offs + i], path.points[offs + 3 + i], path.points[offs + 6 + i], path.points[offs + 9 + i], frac);
+                dst[i] = getDerivativeBspline(path.points[offs + i], path.points[offs + 3 + i], path.points[offs + 6 + i], path.points[offs + 9 + i], frac);
         } break;
         case PathKind.Hermite: {
             for (let i = 0; i < 3; i++)

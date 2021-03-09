@@ -23,10 +23,7 @@ module.exports = {
       // ts-loader defined in dev and prod separately
       {
         test: /\.(png|woff2)$/,
-        loader: 'file-loader',
-        options: {
-          name: '[name]-[sha1:hash:hex:20].[ext]',
-        },
+        type: 'asset/resource',
       },
       {
         test: /\.glsl$/,

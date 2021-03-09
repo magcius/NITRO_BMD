@@ -13,7 +13,7 @@ import { fillMatrix4x3, fillMatrix4x4, fillColor } from "../gfx/helpers/UniformB
 import { mat4, quat, vec3, vec2 } from "gl-matrix";
 import { computeViewSpaceDepthFromWorldSpaceAABB, CameraController } from "../Camera";
 import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper";
-import { assert } from "../util";
+import { assert, mod } from "../util";
 import { pushAntialiasingPostProcessPass, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers";
 import { GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth, GfxRenderInst } from "../gfx/render/GfxRenderInstManager";
 import { ItemInstance, ObjectDefinition } from "./item";
@@ -75,10 +75,6 @@ export function rwTexture(texture: rw.Texture, txdName: string, useDXT = true): 
     const transparent = image.hasAlpha();
     image.delete();
     return { name, width, height, levels, pixelFormat, transparent };
-}
-
-function mod(a: number, b: number) {
-    return (a % b + b) % b;
 }
 
 function halve(pixels: Uint8Array, width: number, height: number, bpp: number): Uint8Array {

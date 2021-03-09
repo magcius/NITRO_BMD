@@ -1011,7 +1011,7 @@ export class Binder {
         if (this.exCollisionPartsValid)
             sceneObjHolder.collisionDirector.keepers[CollisionKeeperCategory.Map].addToGlobal(assertExists(this.exCollisionParts));
 
-        if (this.hostOffsetVec) {
+        if (this.hostOffsetVec !== null) {
             vec3.copy(scratchVec3c, this.hostOffsetVec);
 
             if (this.hostBaseMtx !== null && this.useHostBaseMtxWithOffsetVec)

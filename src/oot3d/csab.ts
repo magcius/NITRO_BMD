@@ -1,7 +1,7 @@
 
 import ArrayBufferSlice from "../ArrayBufferSlice";
 import { Version, Bone } from "./cmb";
-import { assert, readString, align, assertExists } from "../util";
+import { assert, readString, align, assertExists, mod } from "../util";
 import AnimationController from "../AnimationController";
 import { mat4 } from "gl-matrix";
 import { getPointHermite } from "../Spline";
@@ -337,10 +337,6 @@ function hermiteInterpolate(k0: AnimationKeyframeHermite, k1: AnimationKeyframeH
     const s0 = k0.tangentOut * length;
     const s1 = k1.tangentIn * length;
     return getPointHermite(p0, p1, s0, s1, t);
-}
-
-function mod(a: number, b: number): number {
-    return (a + b) % b;
 }
 
 function sampleAnimationTrackHermite(track: AnimationTrackHermite, frame: number) {

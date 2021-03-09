@@ -8,6 +8,7 @@ import { readString, assert } from './util';
 
 export const enum ZipCompressionMethod {
     None = 0,
+    DEFLATE = 8,
     LZMA = 14,
 }
 
@@ -148,7 +149,7 @@ export function parseZipFile(buffer: ArrayBufferSlice): ZipFile {
     let cdIdx = cdOffs;
     for (let i = 0; i < numEntries; i++) {
         assert(readString(buffer, cdIdx + 0x00, 0x04) === 'PK\x01\x02');
-        const compressionMethod = view.getUint32(cdIdx + 0x0A, true);
+        const compressionMethod = view.getUint16(cdIdx + 0x0A, true);
         const dataSize = view.getUint32(cdIdx + 0x14, true);
         const uncompressedSize = view.getUint32(cdIdx + 0x18, true);
         const filenameSize = view.getUint16(cdIdx + 0x1C, true);

@@ -94,25 +94,33 @@ class JointTreeNode {
     }
 }
 
-export function J3DCalcBBoardMtx(dst: mat4, m: mat4): void {
-    // The column vectors lengths here are the scale.
+const scratchVec3a = vec3.create();
+export function J3DCalcBBoardMtx(dst: mat4, m: ReadonlyMat4): void {
+    // Z        = { 0, 0, 1 }
+    // X = Y^Z  = { Y[1], -Y[0], 0 }
+    // Y = Z^X  = { Y[0],  Y[1], 0 }
+    vec3.set(scratchVec3a, m[4], m[5], 0);
+    vec3.normalize(scratchVec3a, scratchVec3a);
+
+    // Extract scale.
     const mx = Math.hypot(m[0], m[1], m[2]);
     const my = Math.hypot(m[4], m[5], m[6]);
     const mz = Math.hypot(m[8], m[9], m[10]);
 
-    dst[0] = mx;
-    dst[4] = 0;
-    dst[8] = 0;
-    dst[12] = m[12];
-
-    dst[1] = 0;
-    dst[5] = my;
-    dst[9] = 0;
-    dst[13] = m[13];
-
+    dst[0] = mx * scratchVec3a[1];
+    dst[1] = mx * -scratchVec3a[0];
     dst[2] = 0;
+
+    dst[4] = my * scratchVec3a[0];
+    dst[5] = my * scratchVec3a[1];
     dst[6] = 0;
+
+    dst[8] = 0;
+    dst[9] = 0;
     dst[10] = mz;
+
+    dst[12] = m[12];
+    dst[13] = m[13];
     dst[14] = m[14];
 
     // Fill with junk to try and signal when something has gone horribly wrong. This should go unused,
@@ -123,36 +131,45 @@ export function J3DCalcBBoardMtx(dst: mat4, m: mat4): void {
     dst[15] = 9999.0;
 }
 
-const scratchVec3 = vec3.create();
-export function J3DCalcYBBoardMtx(dst: mat4, m: mat4, v: vec3 = scratchVec3): void {
-    // The column vectors lengths here are the scale.
+const scratchVec3b = vec3.create(), scratchVec3c = vec3.create();
+export function J3DCalcYBBoardMtx(dst: mat4, m: ReadonlyMat4): void {
+    // Z        = { 0, 0, 1 }
+    // X = Y^Z  = { Y[1], -Y[0], 0 }
+    // Z = X^Y
+
+    vec3.set(scratchVec3a, m[4], m[5], m[6]);
+    vec3.normalize(scratchVec3a, scratchVec3a);
+    vec3.set(scratchVec3b, -m[5], m[4], 0);
+    vec3.normalize(scratchVec3b, scratchVec3b);
+    vec3.cross(scratchVec3c, scratchVec3b, scratchVec3a);
+
+    // Extract scale.
     const mx = Math.hypot(m[0], m[1], m[2]);
+    const my = Math.hypot(m[4], m[5], m[6]);
     const mz = Math.hypot(m[8], m[9], m[10]);
 
-    vec3.set(v, 0.0, -m[6], m[5]);
-    vec3.normalize(v, v);
+    dst[0] = mx * scratchVec3b[0];
+    dst[1] = mx * scratchVec3a[0];
+    dst[2] = mx * scratchVec3c[0];
 
-    dst[0] = mx;
-    dst[4] = m[4];
-    dst[8] = 0;
+    dst[4] = my * scratchVec3b[1];
+    dst[5] = my * scratchVec3a[1];
+    dst[6] = my * scratchVec3c[1];
+
+    dst[8] = mz * scratchVec3b[2];
+    dst[9] = mz * scratchVec3a[2];
+    dst[10] = mz * scratchVec3c[2];
+
     dst[12] = m[12];
-
-    dst[1] = 0;
-    dst[5] = m[5];
-    dst[9] = v[1] * mz;
     dst[13] = m[13];
-
-    dst[2] = 0;
-    dst[6] = m[6];
-    dst[10] = v[2] * mz;
     dst[14] = m[14];
 
     // Fill with junk to try and signal when something has gone horribly wrong. This should go unused,
     // since this is supposed to generate a mat4x3 matrix.
-    m[3] = 9999.0;
-    m[7] = 9999.0;
-    m[11] = 9999.0;
-    m[15] = 9999.0;
+    dst[3] = 9999.0;
+    dst[7] = 9999.0;
+    dst[11] = 9999.0;
+    dst[15] = 9999.0;
 }
 
 export function prepareShapeMtxGroup(packetParams: PacketParams, shapeInstanceState: ShapeInstanceState, shape: Shape, mtxGroup: MtxGroup): boolean {

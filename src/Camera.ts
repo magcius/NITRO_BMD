@@ -524,6 +524,8 @@ export class StudioCameraController extends FPSCameraController {
             if (inputManager.isKeyDownEventTriggered('Escape')) {
                 this.stopAnimation();
             }
+            // Set result to unchanged to prevent needless savestate creation during playback.
+            result = CameraUpdateResult.Unchanged;
         } else {
             if (!this.isOnKeyframe && inputManager.isKeyDownEventTriggered('Enter')) {
                 this.animationManager.addNextKeyframe(mat4.clone(this.camera.worldMatrix));

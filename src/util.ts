@@ -144,10 +144,6 @@ export function magicstr(v: number): string {
     return a0 + a1 + a2 + a3;
 }
 
-export function wordCountFromByteCount(byteCount: number): number {
-    return align(byteCount, 4) / 4;
-}
-
 export function concat<T>(dst: T[], src: T[]): void {
     for (let i = 0; i < src.length; i++)
         dst.push(src[i]);
@@ -206,4 +202,8 @@ export function setBitFlagEnabled(v: number, mask: number, enabled: boolean): nu
     else
         v &= ~mask;
     return v;
+}
+
+export function mod(a: number, b: number): number {
+    return (a + b) % b;
 }

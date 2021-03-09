@@ -1205,8 +1205,6 @@ class ConeGravity extends PlanetGravity {
                 }
             } else {
                 // "Bottom" of the cone -- the flat surface.
-
-                this.enableBottom = true;
                 if (this.enableBottom) {
                     calcPerpendicFootToLineInside(scratchVec3c, coord, scratchVec3b, scratchVec3f);
                     if (!isNearZero(vec3.squaredDistance(scratchVec3c, coord), 0.001)) {

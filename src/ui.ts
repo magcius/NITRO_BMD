@@ -1506,14 +1506,13 @@ class ViewerSettings extends Panel {
 
         this.contents.style.lineHeight = '36px';
 
+         // Don't change the order
         this.camRadioButtons = new RadioButtons('Camera Controls', ['WASD', 'Orbit', 'Ortho']);
         this.camRadioButtons.onselectedchange = () => {
             if (ui.studioModeEnabled)
                 return;
 
-            const index = this.camRadioButtons.selectedIndex;
-            const cameraControllerClass = this.camControllerClasses[index];
-            this.setCameraControllerClass(cameraControllerClass);
+            this.setCameraControllerIndex(this.camRadioButtons.selectedIndex);
         };
         this.contents.appendChild(this.camRadioButtons.elem);
 
@@ -1547,6 +1546,12 @@ class ViewerSettings extends Panel {
         this.invertXCheckbox.onchanged = () => { GlobalSaveManager.saveSetting(`InvertX`, this.invertXCheckbox.checked); };
         this.contents.appendChild(this.invertXCheckbox.elem);
         GlobalSaveManager.addSettingListener('InvertX', this.invertXChanged.bind(this));
+    }
+
+    public setCameraControllerIndex(idx: number) {
+        const index = this.camRadioButtons.selectedIndex;
+        const cameraControllerClass = this.camControllerClasses[index];
+        this.setCameraControllerClass(cameraControllerClass);
     }
 
     private onFovSliderChange(e: UIEvent): void {
@@ -1843,10 +1848,25 @@ class StudioPanel extends FloatingPanel {
         };
         this.elem.style.opacity = '0.8';
         this.setTitle(CLAPBOARD_ICON, 'Studio');
+        document.head.insertAdjacentHTML('beforeend', `
+        <style>
+            button.SettingsButton {
+                font: 16px monospace;
+                font-weight: bold;
+                border: none;
+                width: 100%;
+                color: inherit;
+                padding: 0.15rem;
+                text-align: center;
+                background-color: rgb(64, 64, 64);
+            }
+        </style>
+        `);
         this.contents.insertAdjacentHTML('beforeend', `
         <div style="display: grid; grid-template-columns: 3fr 1fr 1fr; align-items: center;">
             <div class="SettingsHeader">Studio Mode</div>
-            <div id="enableStudioBtn" class="SettingsButton EnableStudioMode">Enable</div><div id="disableStudioBtn" class="SettingsButton DisableStudioMode">Disable</div>
+            <button id="enableStudioBtn" class="SettingsButton EnableStudioMode">Enable</button>
+            <button id="disableStudioBtn" class="SettingsButton DisableStudioMode">Disable</button>
         </div>
         <div id="studioPanelContents" hidden></div>
         `);
@@ -1863,8 +1883,8 @@ class StudioPanel extends FloatingPanel {
 
         this.enableStudioBtn.onclick = () => {
             if (!ui.studioModeEnabled) {
-                // Switch to the FPS Camera Controller ().
-                (ui.viewerSettings.elem.querySelector('.CameraControllerWASD') as HTMLElement).click();
+                // Switch to the FPS Camera Controller.
+                ui.viewerSettings.setCameraControllerIndex(0);
                 ui.studioModeEnabled = true;
                 // Disable switching of camera controllers in studio mode.
                 ui.viewerSettings.contents.querySelectorAll('.SettingsButton').forEach(el => {
@@ -1954,14 +1974,6 @@ class StudioPanel extends FloatingPanel {
             #playbackControls {
                 padding: 0 5rem 1rem;
                 border-top: 1px solid #444;
-            }
-            button.SettingsButton {
-                font: 16px monospace;
-                font-weight: bold;
-                border: none;
-                width: 100%;
-                color: inherit;
-                padding: 0.15rem;
             }
         </style>
         `);
@@ -2528,7 +2540,7 @@ class StudioPanel extends FloatingPanel {
         keyframeListItem.dataset.name = keyframeListItem.innerText;
         keyframeListItem.onclick = (e: MouseEvent) => this.selectKeyframeListItem(e);
         const clearButton = document.createElement('button');
-        clearButton.textContent = '🗙';
+        clearButton.textContent = '×';
         clearButton.type = 'button';
         clearButton.style.color = 'white';
         clearButton.style.position = 'absolute';
@@ -2541,7 +2553,7 @@ class StudioPanel extends FloatingPanel {
         clearButton.style.cursor = 'pointer';
         clearButton.style.backgroundColor = 'transparent';
         clearButton.style.border = '0';
-        clearButton.style.fontSize = '16px';
+        clearButton.style.fontSize = '24px';
         clearButton.style.padding = '0';
         clearButton.style.fontWeight = 'bold';
         clearButton.onclick = e => {

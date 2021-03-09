@@ -1109,6 +1109,14 @@ export function quatFromMat4(out: quat, m: ReadonlyMat4): void {
     }
 }
 
+export function setMtxQuat(dst: mat4, q: ReadonlyQuat): void {
+    const x = dst[12], y = dst[13], z = dst[14];
+    mat4.fromQuat(dst, q);
+    dst[12] = x;
+    dst[13] = y;
+    dst[14] = z;
+}
+
 export function makeQuatFromVec(dst: quat, front: ReadonlyVec3, up: ReadonlyVec3): void {
     makeMtxFrontUp(scratchMatrix, front, up);
     quatFromMat4(dst, scratchMatrix);

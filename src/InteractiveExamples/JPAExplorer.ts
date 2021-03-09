@@ -9,7 +9,7 @@ import * as JPA from '../Common/JSYSTEM/JPA';
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache";
 import { mat4, vec3 } from "gl-matrix";
 import { GfxRenderInstManager, executeOnPass } from "../gfx/render/GfxRenderInstManager";
-import { assertExists, hexzero, assert } from "../util";
+import { assertExists, hexzero, assert, mod } from "../util";
 import { SceneContext } from "../SceneBase";
 import { LAYER_ICON, HIGHLIGHT_COLOR, Checkbox, TextField } from "../ui";
 import { GridPlane } from "./GridPlane";
@@ -113,10 +113,6 @@ class BasicEffectSystem {
         this.jpacData.destroy(device);
         this.emitterManager.destroy(device);
     }
-}
-
-function mod(a: number, b: number): number {
-    return (a + b) % b;
 }
 
 function arrayNextIdx<T>(L: T[], n: number, incr: number): number {

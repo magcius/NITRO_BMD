@@ -14,7 +14,7 @@ import { Vec3Zero, MathConstants, setMatrixTranslation } from '../MathHelpers';
 import { SceneContext } from '../SceneBase';
 import { FakeTextureHolder, TextureMapping } from '../TextureHolder';
 import * as UI from '../ui';
-import { assert, assertExists, decodeString } from '../util';
+import { assert, assertExists, decodeString, mod } from '../util';
 import * as Viewer from '../viewer';
 import * as BIN from "./bin";
 import { GallerySceneRenderer } from './Gallery';
@@ -163,10 +163,6 @@ export function fillSceneParamsData(d: Float32Array, camera: Camera, lightingInd
 }
 
 const bindingLayouts: GfxBindingLayoutDescriptor[] = [{ numUniformBuffers: 2, numSamplers: 1 }];
-
-function mod(a: number, b: number) {
-    return (a + b) % b;
-}
 
 const tutorialScratch = vec3.create();
 class KatamariDamacyRenderer implements Viewer.SceneGfx {
