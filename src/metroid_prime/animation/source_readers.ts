@@ -365,14 +365,8 @@ class BitLevelLoader {
         if ((bitRem + q) > 32)
             tempBuf |= this.data[wordCur + 1] << (32 - bitRem);
 
-        /* Mask it */
-        const mask = (1 << q) - 1;
-        tempBuf &= mask;
-
         /* Sign extend */
-        const sign = (tempBuf >>> (q - 1)) & 0x1;
-        if (sign)
-            tempBuf |= ~0 << q;
+        tempBuf = tempBuf << (32 - q) >> (32 - q);
 
         /* Return delta value */
         this.bitIdx += q;

@@ -52,8 +52,8 @@ mat4.mul(posMtx, fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStil
 const posMtxSkybox = mat4.clone(fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStillWrong);
 
 // Hard-coded max matrix slot counts
-export const maxPosMtxArraySize = 100;
-export const maxTexMtxArraySize = 110;
+export const maxPosMtxArraySize = 128;
+export const maxTexMtxArraySize = 128;
 
 export class RetroTextureHolder extends GXTextureHolder<TXTR> {
     public addMaterialSetTextures(device: GfxDevice, materialSet: MaterialSet): void {
@@ -143,7 +143,7 @@ class SurfaceInstance {
 
     constructor(public surfaceData: SurfaceData, public materialInstance: MaterialInstance, public materialGroupInstance: MaterialGroupInstance, public modelMatrix: mat4) {
         this.materialTextureKey = materialInstance.textureKey;
-        this.packetParams = new PacketParams(materialPosMtxSize(materialInstance.material.gxMaterial));
+        this.packetParams = new PacketParams(materialPosMtxSize(materialGroupInstance.material.gxMaterial));
     }
 
     public prepareToRender(device: GfxDevice, renderHelper: GXRenderHelperGfx, viewerInput: Viewer.ViewerRenderInput, isSkybox: boolean, actorLights: ActorLights | null, envelopeMats?: mat4[]): void {
@@ -780,20 +780,22 @@ export class CMDLRenderer {
         // all groups using that material.
         for (let i = 0; i < materialSet.materials.length; i++) {
             const material = materialSet.materials[i];
-            const materialGroupIndex = animationData ? i : material.groupIndex;
+            const usesExtendedMtxArray = !!material.gxMaterial.extendedPosMtxArraySize;
+            const materialGroupIndex = usesExtendedMtxArray ? i : material.groupIndex;
             if (this.materialGroupInstances[materialGroupIndex] === undefined)
                 this.materialGroupInstances[materialGroupIndex] = new MaterialGroupInstance(device, material);
 
             // Now create the material command.
             const materialGroupCommand = this.materialGroupInstances[materialGroupIndex];
-            this.materialInstances[i] = new MaterialInstance(materialGroupCommand, material, materialSet, this.textureHolder);
+            this.materialInstances.push(new MaterialInstance(materialGroupCommand, material, materialSet, this.textureHolder));
         }
 
         for (let i = 0; i < this.cmdlData.surfaceData.length; i++) {
             const surfaceData = this.cmdlData.surfaceData[i];
             const surface = surfaceData.surface;
             const materialCommand = this.materialInstances[surface.materialIndex];
-            const materialGroupCommand = this.materialGroupInstances[animationData ? surface.materialIndex : materialCommand.material.groupIndex];
+            const usesExtendedMtxArray = !!materialCommand.material.gxMaterial.extendedPosMtxArraySize;
+            const materialGroupCommand = this.materialGroupInstances[usesExtendedMtxArray ? surface.materialIndex : materialCommand.material.groupIndex];
 
             // Don't render occluders.
             if (materialCommand.material.isOccluder)

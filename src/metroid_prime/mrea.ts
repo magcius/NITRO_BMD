@@ -761,7 +761,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                 // Relocate position index into surface skin index for vertex shader to lookup
                 vertexDataView.setFloat32(v * vertexStride + pnMtxIdxOffs, surfaceSkinIndex, true);
                 for (const texMtxIdxOff of texMtxIdxOffs)
-                    vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(surfaceSkinIndex) + 10);
+                    vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(surfaceSkinIndex));
 
                 // Used by renderer to lookup model skin index from surface skin index for loading matrix uniforms
                 if (texNMtxIdx !== undefined)

@@ -548,6 +548,18 @@ ${this.generateLightAttnFn(chan, lightName)}
         return `${funcName}(GetPosTexMatrix(${attrStr}), ${src})`;
     }
 
+    private generateMulPnMatrixDynamic(attrStr: string, src: string, funcName: string = `Mul`): string {
+        if (this.material.extendedPosMtxArraySize)
+            return `${funcName}(u_PosMtx[uint(${attrStr})], ${src})`;
+        return this.generateMulPntMatrixDynamic(attrStr, src, funcName);
+    }
+
+    private generateMulTexMatrixDynamic(attrStr: string, src: string, funcName: string = `Mul`): string {
+        if (this.material.extendedTexMtxArraySize)
+            return `${funcName}(u_TexMtx[uint(${attrStr})], ${src})`;
+        return this.generateMulPntMatrixDynamic(attrStr, src, funcName);
+    }
+
     private generateTexMtxIdxAttr(index: GX.TexCoordID): string {
         if (index === GX.TexCoordID.TEXCOORD0) return `(a_TexMtx0123Idx.x * 256.0)`;
         if (index === GX.TexCoordID.TEXCOORD1) return `(a_TexMtx0123Idx.y * 256.0)`;
@@ -612,7 +624,7 @@ ${this.generateLightAttnFn(chan, lightName)}
             useTexMtxIdx = true;
         if (useTexMtxIdx) {
             const attrStr = this.generateTexMtxIdxAttr(texCoordGenIndex);
-            return this.generateMulPntMatrixDynamic(attrStr, src);
+            return this.generateMulTexMatrixDynamic(attrStr, src);
         } else {
             return this.generateMulPntMatrixStatic(this.material.texGens[texCoordGenIndex].matrix, src);
         }
@@ -1240,7 +1252,7 @@ ${this.generateFogFunc(`t_Fog`)}
     private generateMulPos(): string {
         const src = `vec4(a_Position.xyz, 1.0)`;
         if (materialUsePnMtxIdx(this.material))
-            return this.generateMulPntMatrixDynamic(`a_Position.w`, src);
+            return this.generateMulPnMatrixDynamic(`a_Position.w`, src);
         else
             return this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src);
     }
@@ -1248,7 +1260,7 @@ ${this.generateFogFunc(`t_Fog`)}
     private generateMulNrm(): string {
         const src = `vec4(a_Normal.xyz, 0.0)`;
         if (materialUsePnMtxIdx(this.material))
-            return this.generateMulPntMatrixDynamic(`a_Position.w`, src, `MulNormalMatrix`);
+            return this.generateMulPnMatrixDynamic(`a_Position.w`, src, `MulNormalMatrix`);
         else
             return this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src, `MulNormalMatrix`);
     }

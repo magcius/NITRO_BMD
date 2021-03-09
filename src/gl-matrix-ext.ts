@@ -10,7 +10,7 @@ export class mat3_ext {
      *
      * @param {mat3} out the receiving matrix
      * @param {ReadonlyMat3} a the matrix to rotate
-     * @param {ReadonlyVec3} v the vec2 to scale the matrix by
+     * @param {ReadonlyVec3} v the vec3 to scale the matrix by
      * @returns {mat3} out
      **/
     static scale3(out: mat3, a: ReadonlyMat3, v: ReadonlyVec3): mat3 {

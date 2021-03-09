@@ -65,8 +65,7 @@ export class PacketParams {
     }
 
     public clear(): void {
-        for (let i = 0; i < this.u_PosMtx.length; i++)
-            mat4.identity(this.u_PosMtx[i]);
+        this.u_PosMtx.forEach(mat4.identity);
     }
 }
 
