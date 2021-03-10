@@ -256,7 +256,7 @@ export class AnimSourceCompressed {
         this.duration = stream.readFloat32();
         this.interval = stream.readFloat32();
         this.rootBone = stream.readUint32();
-        this.looping = stream.readUint32() != 0;
+        this.looping = stream.readUint32() !== 0;
         this.rotationDiv = stream.readUint32();
         this.translationMult = stream.readFloat32();
         if (mp2)

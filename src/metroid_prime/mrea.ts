@@ -547,7 +547,7 @@ function parseWorldModels_MP1(stream: InputStream, worldModelCount: number, sect
         const worldModelIndex = worldModels.length;
         let geometry: Geometry;
 
-        [geometry, sectionIndex] = parseGeometry(stream, materialSet, sectionOffsTable, false, true, version >= AreaVersion.MP2, false, sectionIndex, worldModelIndex);
+        [geometry, sectionIndex] = parseGeometry(stream, materialSet, sectionOffsTable, false, true, version >= AreaVersion.MP2, false, sectionIndex, worldModelIndex, null);
 
         worldModels.push({ geometry, modelMatrix, bbox });
     }
@@ -577,7 +577,7 @@ function parseWorldModels_MP3(stream: InputStream, worldModelCount: number, wobj
     return worldModels;
 }
 
-function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: number, posSectionOffs: number, nrmSectionOffs: number, clrSectionOffs: number, uvfSectionOffs: number, uvsSectionOffs: number | null, sectionOffsTable: number[], worldModelIndex: number, materialSet: MaterialSet, isEchoes: boolean, cskr?: CSKR): [Surface[], number] {
+function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: number, posSectionOffs: number, nrmSectionOffs: number, clrSectionOffs: number, uvfSectionOffs: number, uvsSectionOffs: number | null, sectionOffsTable: number[], worldModelIndex: number, materialSet: MaterialSet, isEchoes: boolean, cskr: CSKR | null): [Surface[], number] {
     function fillVatFormat(nrmType: GX.CompType, tex0Type: GX.CompType, compShift: number): GX_VtxAttrFmt[] {
         const vatFormat: GX_VtxAttrFmt[] = [];
         vatFormat[GX.Attr.POS] = { compCnt: GX.CompCnt.POS_XYZ, compType: GX.CompType.F32, compShift };
@@ -865,7 +865,7 @@ function parseSurfaces_DKCR(stream: InputStream, surfaceCount: number, sectionIn
     return [surfaces, sectionIndex];
 }
 
-export function parseGeometry(stream: InputStream, materialSet: MaterialSet, sectionOffsTable: number[], hasPosShort: boolean, hasUVShort: boolean, isEchoes: boolean, isDKCR: boolean, sectionIndex: number, worldModelIndex: number, cskr?: CSKR): [Geometry, number] {
+export function parseGeometry(stream: InputStream, materialSet: MaterialSet, sectionOffsTable: number[], hasPosShort: boolean, hasUVShort: boolean, isEchoes: boolean, isDKCR: boolean, sectionIndex: number, worldModelIndex: number, cskr: CSKR | null): [Geometry, number] {
     const posSectionOffs = sectionOffsTable[sectionIndex++];
     const nrmSectionOffs = sectionOffsTable[sectionIndex++];
     const clrSectionOffs = sectionOffsTable[sectionIndex++];
@@ -905,7 +905,7 @@ export function parseGeometry_MP3_MREA(stream: InputStream, materialSet: Materia
     if (isDKCR) {
         [surfaces, gpudSectionIndex] = parseSurfaces_DKCR(stream, surfaceCount, gpudSectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, false);
     } else {
-        [surfaces, gpudSectionIndex] = parseSurfaces(stream, surfaceCount, gpudSectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, true);
+        [surfaces, gpudSectionIndex] = parseSurfaces(stream, surfaceCount, gpudSectionIndex, posSectionOffs, nrmSectionOffs, clrSectionOffs, uvfSectionOffs, uvsSectionOffs, sectionOffsTable, worldModelIndex, materialSet, true, null);
     }
 
     const geometry: Geometry = { surfaces };

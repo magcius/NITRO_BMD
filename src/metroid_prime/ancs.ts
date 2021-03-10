@@ -47,8 +47,8 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem, asset
         const skinID = stream.readAssetID();
         const skelID = stream.readAssetID();
 
-        resourceSystem.registerModelSkin(modelID, skinID);
-        const model = resourceSystem.loadAssetByID<CMDL>(modelID, "CMDL");
+        const model = resourceSystem.loadAssetByID<CMDL>(modelID, "CMDL",
+            { cachePriority: 1, loadDetails: { cskrId: skinID } });
         const skel = resourceSystem.loadAssetByID<CINF>(skelID, "CINF");
 
         const numAnimNames = stream.readUint32();

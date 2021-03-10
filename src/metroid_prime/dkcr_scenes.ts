@@ -32,7 +32,7 @@ class DKCRSceneDesc implements Viewer.SceneDesc {
             const levelPak = PAK.parse(buffer, PAK.CompressionMethod.CMPD_ZLIB);
             const resourceSystem = new ResourceSystem(ResourceGame.DKCR, [levelPak], null);
             for (const mlvlEntry of levelPak.namedResourceTable.values()) {
-                if (this.worldName.length !== 0 && this.worldName != mlvlEntry.name) continue;
+                if (this.worldName.length !== 0 && this.worldName !== mlvlEntry.name) continue;
                 const mlvl: MLVL.MLVL = assertExists(resourceSystem.loadAssetByID<MLVL.MLVL>(mlvlEntry.fileID, 'MLVL'));
                 assert(mlvl.areaTable.length === 1);
                 const area: MLVL.Area = mlvl.areaTable[0];

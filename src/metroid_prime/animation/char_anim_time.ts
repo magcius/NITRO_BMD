@@ -11,7 +11,7 @@ export const enum AnimTimeState {
 
 export class CharAnimTime {
     constructor(public time: number = 0.0,
-                public state: AnimTimeState = time != 0.0 ? AnimTimeState.NonZero : AnimTimeState.ZeroSteady) {
+                public state: AnimTimeState = time !== 0.0 ? AnimTimeState.NonZero : AnimTimeState.ZeroSteady) {
     }
 
     public static FromStream(stream: InputStream): CharAnimTime {
@@ -47,8 +47,8 @@ export class CharAnimTime {
 
     public Direction(): number {
         let direction = -1;
-        if (this.state != AnimTimeState.ZeroDecreasing) {
-            if (this.state != AnimTimeState.ZeroSteady)
+        if (this.state !== AnimTimeState.ZeroDecreasing) {
+            if (this.state !== AnimTimeState.ZeroSteady)
                 direction = 1;
             else
                 direction = 0;
@@ -115,7 +115,7 @@ export class CharAnimTime {
 
     public Add(other: CharAnimTime): CharAnimTime {
         if (this.state === AnimTimeState.Infinity && other.state === AnimTimeState.Infinity) {
-            if (other.time != this.time)
+            if (other.time !== this.time)
                 return new CharAnimTime(0.0);
             return this;
         } else if (this.state === AnimTimeState.Infinity) {
@@ -167,7 +167,7 @@ export class CharAnimTime {
 
     public Mul(other: CharAnimTime): CharAnimTime {
         if (this.state === AnimTimeState.Infinity && other.state === AnimTimeState.Infinity) {
-            if (other.time != this.time)
+            if (other.time !== this.time)
                 return new CharAnimTime(0.0);
             return this;
         } else if (this.state === AnimTimeState.Infinity) {

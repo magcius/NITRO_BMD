@@ -304,13 +304,13 @@ class StreamedPairOfTotals {
             curTime = curTime.Add(new CharAnimTime(this.source.interval));
         }
 
-        if (prior != -1 && prior < this.prior.currentKey) {
+        if (prior !== -1 && prior < this.prior.currentKey) {
             this.prior.Initialize();
             this.next.Initialize();
             loader.Reset();
         }
 
-        if (next != -1) {
+        if (next !== -1) {
             while (next > this.next.currentKey) {
                 this.flip = !this.flip;
                 this.prior.IncrementInto(loader, this.next);
@@ -383,7 +383,7 @@ class BitLevelLoader {
 
         /* That's it */
         this.bitIdx += 1;
-        return (tempBuf & 0x1) != 0;
+        return (tempBuf & 0x1) !== 0;
     }
 }
 

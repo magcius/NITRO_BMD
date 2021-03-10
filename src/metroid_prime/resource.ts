@@ -29,7 +29,7 @@ export const enum ResourceGame {
     DKCR
 }
 
-type ParseFunc<T> = (stream: InputStream, resourceSystem: ResourceSystem, assetID: string) => T;
+type ParseFunc<T> = (stream: InputStream, resourceSystem: ResourceSystem, assetID: string, loadDetails?: any) => T;
 type Resource = any;
 
 export const invalidAssetID: string = "\xFF\xFF\xFF\xFF";
@@ -80,12 +80,16 @@ function combineBuffers(totalSize: number, buffers: Uint8Array[]): Uint8Array {
     return totalBuffer;
 }
 
+export interface LoadContext {
+    cachePriority: number,
+    loadDetails: any
+}
+
 export class ResourceSystem {
-    private _cache: Map<string, Resource>;
-    private _modelSkins: Map<string, string> = new Map<string, string>();
+    private _cache: Map<string, {resource: Resource, priority: number}>;
 
     constructor(public game: ResourceGame, public paks: PAK[], public nameData: NameData | null = null) {
-        this._cache = new Map<string, Resource>();
+        this._cache = new Map<string, {resource: Resource, priority: number}>();
     }
 
     private loadResourceBuffer_LZO(buffer: ArrayBufferSlice): ArrayBufferSlice {
@@ -193,13 +197,13 @@ export class ResourceSystem {
         return null;
     }
 
-    public loadAssetByID<T extends Resource>(assetID: string, fourCC: string): T | null {
+    public loadAssetByID<T extends Resource>(assetID: string, fourCC: string, loadContext?: LoadContext): T | null {
         if (assetID === '\xFF\xFF\xFF\xFF' || assetID === '\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF')
             return null;
 
         const cached = this._cache.get(assetID);
-        if (cached !== undefined)
-            return cached;
+        if (cached !== undefined && (!loadContext || cached.priority >= loadContext.cachePriority))
+            return cached.resource;
 
         const loaderFunc = assertExists(FourCCLoaders[fourCC]);
 
@@ -210,16 +214,8 @@ export class ResourceSystem {
         assert(resource.fourCC === fourCC);
         const buffer = this.loadResourceBuffer(resource);
         const stream = new InputStream(buffer, assetID.length);
-        const inst = loaderFunc(stream, this, assetID);
-        this._cache.set(assetID, inst);
+        const inst = loaderFunc(stream, this, assetID, loadContext?.loadDetails);
+        this._cache.set(assetID, { resource: inst, priority: loadContext?.cachePriority ?? 0 });
         return inst;
-    }
-
-    public registerModelSkin(modelID: string, skinID: string) {
-        this._modelSkins.set(modelID, skinID)
-    }
-
-    public getModelSkin(modelID: string): string | undefined {
-        return this._modelSkins.get(modelID)
     }
 }

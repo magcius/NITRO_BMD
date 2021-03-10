@@ -171,7 +171,7 @@ export class RetroSceneRenderer implements Viewer.SceneGfx {
             this.layersPanel.syncLayerVisibility();
         }
         if (offs + 1 <= byteLength) {
-            this.showAllActors = view.getUint8(offs) != 0;
+            this.showAllActors = view.getUint8(offs) !== 0;
             offs += 1;
         }
         return offs;
@@ -189,13 +189,6 @@ class RetroSceneDesc implements Viewer.SceneDesc {
         const dataFetcher = context.dataFetcher;
         const levelPak = PAK.parse(await dataFetcher.fetchData(`metroid_prime/${this.filename}`), this.gameCompressionMethod);
         const resourceSystem = new ResourceSystem(this.game, [levelPak]);
-
-        // Preload all ANCS resources to associate models with skins
-        for (const entry of levelPak.resourceTable.values()) {
-            if (entry.fourCC === 'ANCS') {
-                resourceSystem.loadAssetByID<ANCS>(entry.fileID, entry.fourCC);
-            }
-        }
 
         for (const mlvlEntry of levelPak.namedResourceTable.values()) {
             assert(mlvlEntry.fourCC === 'MLVL');

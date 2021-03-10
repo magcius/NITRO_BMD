@@ -132,7 +132,7 @@ export class Entity {
                 const character = ancs.characterSet[charID];
                 const model = character.model;
                 if (model !== null) {
-                    if (animID != -1) {
+                    if (animID !== -1) {
                         const animName = character.animNames[animID];
                         const anim = ancs.animationSet.animations.find(v => v.name == animName);
                         const metaAnim = anim?.animation;

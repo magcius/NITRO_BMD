@@ -52,8 +52,8 @@ mat4.mul(posMtx, fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStil
 const posMtxSkybox = mat4.clone(fixPrimeUsingTheWrongConventionYesIKnowItsFromMayaButMayaIsStillWrong);
 
 // Hard-coded max matrix slot counts
-export const maxPosMtxArraySize = 128;
-export const maxTexMtxArraySize = 128;
+export const maxPosMtxArraySize = 192;
+export const maxTexMtxArraySize = 192;
 
 export class RetroTextureHolder extends GXTextureHolder<TXTR> {
     public addMaterialSetTextures(device: GfxDevice, materialSet: MaterialSet): void {
@@ -94,7 +94,7 @@ class ActorLights {
 
                 if (sqDist < (light.radius * light.radius)) {
                     // Shadow cast logic
-                    if (light.castShadows && lightParams.options != WorldLightingOptions.NoShadowCast) {
+                    if (light.castShadows && lightParams.options !== WorldLightingOptions.NoShadowCast) {
                         actorBounds.centerPoint(scratchVec3);
 
                         let lightIsVisible = true;
@@ -532,9 +532,14 @@ export class ModelCache {
     }
 
     public getCMDLData(device: GfxDevice, textureHolder: RetroTextureHolder, cache: GfxRenderCache, model: CMDL): CMDLData {
-        if (!this.cmdlData.has(model.assetID))
-            this.cmdlData.set(model.assetID, new CMDLData(device, textureHolder, cache, model));
-        return this.cmdlData.get(model.assetID)!;
+        const cachedData = this.cmdlData.get(model.assetID);
+        // If a model is reloaded as skinned, update its cache entry
+        if (cachedData && cachedData.cmdl === model)
+            return cachedData;
+
+        const newData = new CMDLData(device, textureHolder, cache, model);
+        this.cmdlData.set(model.assetID, newData);
+        return newData;
     }
 }
 
