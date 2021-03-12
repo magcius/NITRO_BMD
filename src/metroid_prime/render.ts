@@ -183,7 +183,7 @@ class SurfaceInstance {
         for (let p = 0; p < loadedVertexData.draws.length; p++) {
             const packet = loadedVertexData.draws[p];
 
-            let envelopeModelMatrices: (mat4|null)[] | undefined = undefined;
+            let envelopeModelMatrices: (mat4|null)[] = [];
             let defaultUVAnimationModelMatrix = this.modelMatrix;
             if (envelopeMats) {
                 assert(this.packetParams.u_PosMtx.length >= packet.posMatrixTable.length);

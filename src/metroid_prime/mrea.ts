@@ -641,7 +641,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
 
         // If MP1 and a CSKR is available, generate PNMTXIDX and one TEXnMTXIDX
         const generateMtxIdxs = !isEchoes && cskr;
-        let texNMtxIdx: number | undefined = undefined;
+        let texNMtxIdx: number | null = null;
         let texGenNMtxIdxs: number[] = [];
         if (generateMtxIdxs) {
             vcd[GX.Attr.PNMTXIDX] = { type: AttrType.GENERATED_MTXIDX, enableOutput: true };
@@ -744,7 +744,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
             assert(posMtxArraySize <= maxPosMtxArraySize);
             draw.posMatrixTable = Array(posMtxArraySize).fill(0xFFFF);
             material.gxMaterial.extendedPosMtxArraySize = Math.max(material.gxMaterial.extendedPosMtxArraySize ?? 0, posMtxArraySize);
-            if (texNMtxIdx !== undefined) {
+            if (texNMtxIdx !== null) {
                 const texMtxArraySize = posMtxIdxToTexMtxIdx(posMtxArraySize);
                 assert(texMtxArraySize <= maxTexMtxArraySize);
                 draw.texMatrixTable = Array(texMtxArraySize).fill(0xFFFF);
@@ -764,7 +764,7 @@ function parseSurfaces(stream: InputStream, surfaceCount: number, sectionIndex: 
                     vertexDataView.setUint8(v * vertexStride + texMtxIdxOff, posMtxIdxToTexMtxIdx(surfaceSkinIndex));
 
                 // Used by renderer to lookup model skin index from surface skin index for loading matrix uniforms
-                if (texNMtxIdx !== undefined)
+                if (texNMtxIdx !== null)
                     draw.texMatrixTable[posMtxIdxToTexMtxIdx(surfaceSkinIndex)] = skinIdx;
                 draw.posMatrixTable[surfaceSkinIndex] = skinIdx;
             }

@@ -22,7 +22,7 @@ export interface MetroidCharacter {
     charID: number;
     name: string;
     model: CMDL | null;
-    skel?: CINF;
+    skel: CINF | null;
     skinID: string;
     skelID: string;
     animNames: string[];
@@ -62,7 +62,7 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem, asset
             animNames[nameIdx] = stream.readString();
         }
 
-        const char: MetroidCharacter = {charID, name, model, skel: skel ? skel : undefined, skinID, skelID, animNames};
+        const char: MetroidCharacter = {charID, name, model, skel, skinID, skelID, animNames};
         charSet.push(char);
 
         // we don't really care about the rest of the data, but have to parse it to reach the next character in the set
