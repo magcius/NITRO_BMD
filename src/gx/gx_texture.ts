@@ -86,9 +86,18 @@ export function calcMipChain(texture: TextureInputGX, mipCount: number = texture
         const data = texture.data !== null ? texture.data.subarray(mipOffs) : null;
         const paletteFormat = texture.paletteFormat;
         const paletteData = texture.paletteData;
+
+        const mipSize = calcTextureSize(format, width, height);
+
+        // Retro Studios has a buggy mipmap encoder that does not handle tall texture
+        // padding correctly. A 32x64 texture will contain a mip level sized 4x8 and
+        // only emit one block rather than two padded ones. In this case we simply discard
+        // the partial mip level.
+        if (data && mipSize > data.byteLength)
+            break;
+
         mipLevels.push({ name: `${texture.name} mip level ${mipLevel}`, format, width, height, data, paletteFormat, paletteData, mipCount: 1 });
         mipLevel++;
-        const mipSize = calcTextureSize(format, width, height);
         // Mipmap levels are aligned to 32B.
         mipOffs += Math.max(mipSize, 32);
         width /= 2;
