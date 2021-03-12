@@ -42,7 +42,7 @@ export class SceneParams {
 export class MaterialParams {
     public m_TextureMapping: TextureMapping[] = nArray(8, () => new TextureMapping());
     public u_Color: Color[] = nArray(ColorKind.COUNT, () => colorNewCopy(TransparentBlack));
-    public u_TexMtx: mat4[] = nArray(10, () => mat4.create());     // mat4x3
+    public u_TexMtx: mat4[]; // mat4x3
     public u_PostTexMtx: mat4[] = nArray(20, () => mat4.create()); // mat4x3
     public u_IndTexMtx: mat4[] = nArray(3, () => mat4.create()); // mat4x2
     public u_Lights: GX_Material.Light[] = nArray(8, () => new GX_Material.Light());
@@ -50,18 +50,22 @@ export class MaterialParams {
     public u_DynamicAlphaRefA: number = 0;
     public u_DynamicAlphaRefB: number = 0;
 
-    constructor() {
+    constructor(texMtxSize: number = 10) {
+        this.u_TexMtx = nArray(texMtxSize, () => mat4.create());
         colorFromRGBA(this.u_Color[ColorKind.MAT0], 1.0, 1.0, 1.0, 1.0);
         colorFromRGBA(this.u_Color[ColorKind.MAT1], 1.0, 1.0, 1.0, 1.0);
     }
 }
 
 export class PacketParams {
-    public u_PosMtx: mat4[] = nArray(10, () => mat4.create());
+    public u_PosMtx: mat4[];
+
+    constructor(posMtxSize: number = 10) {
+        this.u_PosMtx = nArray(posMtxSize, () => mat4.create());
+    }
 
     public clear(): void {
-        for (let i = 0; i < 10; i++)
-            mat4.identity(this.u_PosMtx[i]);
+        this.u_PosMtx.forEach(mat4.identity);
     }
 }
 
@@ -112,7 +116,7 @@ function fillMaterialParamsDataWithOptimizations(material: GX_Material.GXMateria
 
     for (let i = 0; i < 12; i++)
         offs += fillColor(d, offs, materialParams.u_Color[i]);
-    for (let i = 0; i < 10; i++)
+    for (let i = 0; i < GX_Material.materialTexMtxSize(material); i++)
         offs += fillMatrix4x3(d, offs, materialParams.u_TexMtx[i]);
     for (let i = 0; i < 8; i++)
         offs += fillTextureSize(d, offs, materialParams.m_TextureMapping[i]);
@@ -138,7 +142,7 @@ function fillDrawParamsDataWithOptimizations(material: GX_Material.GXMaterial, d
     let offs = bOffs;
 
     if (GX_Material.materialUsePnMtxIdx(material))
-        for (let i = 0; i < 10; i++)
+        for (let i = 0; i < GX_Material.materialPosMtxSize(material); i++)
             offs += fillMatrix4x3(d, offs, packetParams.u_PosMtx[i]);
     else
         offs += fillMatrix4x3(d, offs, packetParams.u_PosMtx[0]);

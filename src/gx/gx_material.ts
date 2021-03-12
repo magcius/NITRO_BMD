@@ -46,6 +46,8 @@ export interface GXMaterial {
     hasLightsBlock?: boolean;
     hasFogBlock?: boolean;
     hasDynamicAlphaTest?: boolean;
+    extendedPosMtxArraySize?: number;
+    extendedTexMtxArraySize?: number;
 }
 
 export class Light {
@@ -287,7 +289,15 @@ export function materialHasDynamicAlphaTest(material: { hasDynamicAlphaTest?: bo
     return material.hasDynamicAlphaTest !== undefined ? material.hasDynamicAlphaTest : false;
 }
 
-function generateBindingsDefinition(material: { hasPostTexMtxBlock?: boolean, hasLightsBlock?: boolean, hasFogBlock?: boolean, usePnMtxIdx?: boolean, hasDynamicAlphaTest?: boolean }): string {
+export function materialPosMtxSize(material: { extendedPosMtxArraySize?: number }): number {
+    return material.extendedPosMtxArraySize !== undefined ? material.extendedPosMtxArraySize : 10;
+}
+
+export function materialTexMtxSize(material: { extendedTexMtxArraySize?: number }): number {
+    return material.extendedTexMtxArraySize !== undefined ? material.extendedTexMtxArraySize : 10;
+}
+
+function generateBindingsDefinition(material: { hasPostTexMtxBlock?: boolean, hasLightsBlock?: boolean, hasFogBlock?: boolean, usePnMtxIdx?: boolean, hasDynamicAlphaTest?: boolean, extendedPosMtxArraySize?: number, extendedTexMtxArraySize?: number }): string {
     return `
 // Expected to be constant across the entire scene.
 layout(std140) uniform ub_SceneParams {
@@ -320,7 +330,7 @@ layout(std140) uniform ub_MaterialParams {
     vec4 u_ColorAmbReg[2];
     vec4 u_KonstColor[4];
     vec4 u_Color[4];
-    Mat4x3 u_TexMtx[10];
+    Mat4x3 u_TexMtx[${materialTexMtxSize(material)}];
     vec4 u_TextureSizes[4];
     vec4 u_TextureBiases[2];
     Mat4x2 u_IndTexMtx[3];
@@ -344,7 +354,7 @@ ${materialHasDynamicAlphaTest(material) ? `
 // TODO(jstpierre): Rename from ub_DrawParams.
 layout(std140) uniform ub_DrawParams {
 ${materialUsePnMtxIdx(material) ? `
-    Mat4x3 u_PosMtx[10];
+    Mat4x3 u_PosMtx[${materialPosMtxSize(material)}];
 ` : `
     Mat4x3 u_PosMtx[1];
 `}
@@ -355,7 +365,7 @@ uniform sampler2D u_Texture[8];
 }
 
 export function getMaterialParamsBlockSize(material: GXMaterial): number {
-    let size = 4*2 + 4*2 + 4*4 + 4*4 + 4*3*10 + 4*4 + 4*2 + 4*2*3;
+    let size = 4*2 + 4*2 + 4*4 + 4*4 + 4*3*materialTexMtxSize(material) + 4*4 + 4*2 + 4*2*3;
     if (materialHasPostTexMtxBlock(material))
         size += 4*3*20;
     if (materialHasLightsBlock(material))
@@ -372,7 +382,7 @@ export function getDrawParamsBlockSize(material: GXMaterial): number {
     let size = 0;
 
     if (materialUsePnMtxIdx(material))
-        size += 4*3 * 10;
+        size += 4*3 * materialPosMtxSize(material);
     else
         size += 4*3 * 1;
 
@@ -538,6 +548,18 @@ ${this.generateLightAttnFn(chan, lightName)}
         return `${funcName}(GetPosTexMatrix(${attrStr}), ${src})`;
     }
 
+    private generateMulPnMatrixDynamic(attrStr: string, src: string, funcName: string = `Mul`): string {
+        if (this.material.extendedPosMtxArraySize)
+            return `${funcName}(u_PosMtx[uint(${attrStr})], ${src})`;
+        return this.generateMulPntMatrixDynamic(attrStr, src, funcName);
+    }
+
+    private generateMulTexMatrixDynamic(attrStr: string, src: string, funcName: string = `Mul`): string {
+        if (this.material.extendedTexMtxArraySize)
+            return `${funcName}(u_TexMtx[uint(${attrStr})], ${src})`;
+        return this.generateMulPntMatrixDynamic(attrStr, src, funcName);
+    }
+
     private generateTexMtxIdxAttr(index: GX.TexCoordID): string {
         if (index === GX.TexCoordID.TEXCOORD0) return `(a_TexMtx0123Idx.x * 256.0)`;
         if (index === GX.TexCoordID.TEXCOORD1) return `(a_TexMtx0123Idx.y * 256.0)`;
@@ -602,7 +624,7 @@ ${this.generateLightAttnFn(chan, lightName)}
             useTexMtxIdx = true;
         if (useTexMtxIdx) {
             const attrStr = this.generateTexMtxIdxAttr(texCoordGenIndex);
-            return this.generateMulPntMatrixDynamic(attrStr, src);
+            return this.generateMulTexMatrixDynamic(attrStr, src);
         } else {
             return this.generateMulPntMatrixStatic(this.material.texGens[texCoordGenIndex].matrix, src);
         }
@@ -1230,7 +1252,7 @@ ${this.generateFogFunc(`t_Fog`)}
     private generateMulPos(): string {
         const src = `vec4(a_Position.xyz, 1.0)`;
         if (materialUsePnMtxIdx(this.material))
-            return this.generateMulPntMatrixDynamic(`a_Position.w`, src);
+            return this.generateMulPnMatrixDynamic(`a_Position.w`, src);
         else
             return this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src);
     }
@@ -1238,7 +1260,7 @@ ${this.generateFogFunc(`t_Fog`)}
     private generateMulNrm(): string {
         const src = `vec4(a_Normal.xyz, 0.0)`;
         if (materialUsePnMtxIdx(this.material))
-            return this.generateMulPntMatrixDynamic(`a_Position.w`, src, `MulNormalMatrix`);
+            return this.generateMulPnMatrixDynamic(`a_Position.w`, src, `MulNormalMatrix`);
         else
             return this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src, `MulNormalMatrix`);
     }
@@ -1681,7 +1703,7 @@ export function parseLightChannels(r: DisplayListRegisters): LightChannelControl
     for (let i = 0; i < numColors; i++) {
         const colorCntrl = r.xfg(GX.XFRegister.XF_COLOR0CNTRL_ID + i);
         const alphaCntrl = r.xfg(GX.XFRegister.XF_ALPHA0CNTRL_ID + i);
-        const colorChannel = parseColorChannelControlRegister(colorCntrl); 
+        const colorChannel = parseColorChannelControlRegister(colorCntrl);
         const alphaChannel = parseColorChannelControlRegister(alphaCntrl);
         lightChannels.push({ colorChannel, alphaChannel });
     }

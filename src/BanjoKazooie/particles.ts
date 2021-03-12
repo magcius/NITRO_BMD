@@ -4,7 +4,7 @@ import { GfxRenderInstManager, makeSortKey, GfxRendererLayer } from "../gfx/rend
 import { ViewerRenderInput } from "../viewer";
 import { FlipbookRenderer, MovementController, FlipbookData, GeometryData, SpawnedObjects, BKLayer } from "./render";
 import { nArray, hexzero } from "../util";
-import { MathConstants, lerp } from "../MathHelpers";
+import { MathConstants, lerp, randomRange } from "../MathHelpers";
 import { FlipbookMode } from "./flipbook";
 import { LavaRock, SnowballChunk } from "./actors";
 
@@ -23,10 +23,6 @@ const enum MotionType {
     Projectile,
     StopOnCollision,
     BounceOnCollision,
-}
-
-export function randomRange(a: number, b = -a): number {
-    return lerp(a, b, Math.random());
 }
 
 // particle graphics mostly start at 0x700, number indices from there

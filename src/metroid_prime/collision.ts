@@ -340,8 +340,8 @@ function octreeNodeLineCheck(p0: vec3, p1: vec3, node: CollisionOctreeNode, boun
 
             const matID = indexData.triMaterialIDs[triID];
             const material = indexData.materials[matID];
-            const isSolid = (material & CollisionMaterial.Solid) != 0;
-            const isFlipped = (material & CollisionMaterial.FlippedTri) != 0;
+            const isSolid = (material & CollisionMaterial.Solid) !== 0;
+            const isFlipped = (material & CollisionMaterial.FlippedTri) !== 0;
 
             if (!isSolid) continue;
 

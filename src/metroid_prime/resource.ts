@@ -16,9 +16,20 @@ import * as TXTR from './txtr';
 import * as CMDL from './cmdl';
 import * as ANCS from './ancs';
 import * as CHAR from './char';
+import * as ANIM from './anim';
+import * as EVNT from './evnt';
+import * as CSKR from "./cskr";
+import * as CINF from "./cinf";
 import { InputStream } from './stream';
 
-type ParseFunc<T> = (stream: InputStream, resourceSystem: ResourceSystem, assetID: string) => T;
+export const enum ResourceGame {
+    MP1,
+    MP2,
+    MP3,
+    DKCR
+}
+
+type ParseFunc<T> = (stream: InputStream, resourceSystem: ResourceSystem, assetID: string, loadDetails?: any) => T;
 type Resource = any;
 
 export const invalidAssetID: string = "\xFF\xFF\xFF\xFF";
@@ -31,6 +42,10 @@ const FourCCLoaders: { [n: string]: ParseFunc<Resource> } = {
     'CMDL': CMDL.parse,
     'ANCS': ANCS.parse,
     'CHAR': CHAR.parse,
+    'ANIM': ANIM.parse,
+    'EVNT': EVNT.parse,
+    'CSKR': CSKR.parse,
+    'CINF': CINF.parse,
 };
 
 interface NameDataAsset {
@@ -65,11 +80,16 @@ function combineBuffers(totalSize: number, buffers: Uint8Array[]): Uint8Array {
     return totalBuffer;
 }
 
-export class ResourceSystem {
-    private _cache: Map<string, Resource>;
+export interface LoadContext {
+    cachePriority: number,
+    loadDetails: any
+}
 
-    constructor(public paks: PAK[], public nameData: NameData | null = null) {
-        this._cache = new Map<string, Resource>();
+export class ResourceSystem {
+    private _cache: Map<string, {resource: Resource, priority: number}>;
+
+    constructor(public game: ResourceGame, public paks: PAK[], public nameData: NameData | null = null) {
+        this._cache = new Map<string, {resource: Resource, priority: number}>();
     }
 
     private loadResourceBuffer_LZO(buffer: ArrayBufferSlice): ArrayBufferSlice {
@@ -177,13 +197,13 @@ export class ResourceSystem {
         return null;
     }
 
-    public loadAssetByID<T extends Resource>(assetID: string, fourCC: string): T | null {
+    public loadAssetByID<T extends Resource>(assetID: string, fourCC: string, loadContext?: LoadContext): T | null {
         if (assetID === '\xFF\xFF\xFF\xFF' || assetID === '\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF')
             return null;
 
         const cached = this._cache.get(assetID);
-        if (cached !== undefined)
-            return cached;
+        if (cached !== undefined && (!loadContext || cached.priority >= loadContext.cachePriority))
+            return cached.resource;
 
         const loaderFunc = assertExists(FourCCLoaders[fourCC]);
 
@@ -194,8 +214,8 @@ export class ResourceSystem {
         assert(resource.fourCC === fourCC);
         const buffer = this.loadResourceBuffer(resource);
         const stream = new InputStream(buffer, assetID.length);
-        const inst = loaderFunc(stream, this, assetID);
-        this._cache.set(assetID, inst);
+        const inst = loaderFunc(stream, this, assetID, loadContext?.loadDetails);
+        this._cache.set(assetID, { resource: inst, priority: loadContext?.cachePriority ?? 0 });
         return inst;
     }
 }

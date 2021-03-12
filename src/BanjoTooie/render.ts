@@ -12,10 +12,9 @@ import { computeViewMatrix, computeViewMatrixSkybox } from '../Camera';
 import { TextureMapping } from '../TextureHolder';
 import { GfxRenderInstManager, setSortKeyDepthKey, setSortKeyDepth } from '../gfx/render/GfxRenderInstManager';
 import { VertexAnimationEffect, VertexEffectType, GeoNode, AnimationSetup, TextureAnimationSetup, GeoFlags, isSelector, isSorter, SoftwareLightingEffect } from '../BanjoKazooie/geo';
-import { clamp, lerp, MathConstants, Vec3Zero, Vec3UnitY, getMatrixAxisX, getMatrixAxisY, transformVec3Mat4w0, normToLength, transformVec3Mat4w1 } from '../MathHelpers';
+import { clamp, lerp, MathConstants, Vec3Zero, Vec3UnitY, getMatrixAxisX, getMatrixAxisY, transformVec3Mat4w0, normToLength, transformVec3Mat4w1, randomRange } from '../MathHelpers';
 import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers';
 import { RenderData, F3DEX_Program, GeometryData, BoneAnimator, AnimationMode, AdjustableAnimationController } from '../BanjoKazooie/render';
-import { randomRange } from '../BanjoKazooie/particles';
 import { calcTextureMatrixFromRSPState } from '../Common/N64/RSP';
 
 function updateVertexEffectState(effect: VertexAnimationEffect, timeInSeconds: number, deltaSeconds: number) {

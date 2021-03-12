@@ -2,7 +2,7 @@
 // Implements support for Retro Studios actor data
 
 import { ResourceSystem } from "./resource";
-import { readString, assert } from "../util";
+import { readString, assert, assertExists } from "../util";
 import ArrayBufferSlice from '../ArrayBufferSlice';
 import { mat4, vec3 } from 'gl-matrix';
 import { CMDL } from './cmdl';
@@ -12,6 +12,10 @@ import { InputStream } from './stream';
 import { colorFromRGBA, colorNewFromRGBA, Color } from "../Color";
 import { computeModelMatrixSRT, MathConstants } from "../MathHelpers";
 import { GameVersion, AreaVersion } from "./mrea";
+import { AnimTreeNode } from "./animation/tree_nodes";
+import { CINF } from "./cinf";
+import { AnimSysContext, IMetaAnim } from "./animation/meta_nodes";
+import { AnimationData } from "./render";
 
 export const enum MP1EntityType {
     Actor                   = 0x00,
@@ -96,6 +100,11 @@ export class LightParameters {
     public maxAreaLights: Number = 4;
 }
 
+export interface RenderModel {
+    cmdl: CMDL | null;
+    animationData : AnimationData | null;
+}
+
 export class Entity {
     public name: string;
     public active: boolean = true;
@@ -113,22 +122,37 @@ export class Entity {
     public readProperty_MP2(stream: InputStream, resourceSystem: ResourceSystem, propertyID: number) {
     }
 
-    public getRenderModel(): CMDL | null {
+    public getRenderModel(resourceSystem: ResourceSystem): RenderModel {
         if (this.animParams !== null) {
-            const charID = this.animParams.charID;
+            let charID = this.animParams.charID;
+            const animID = this.animParams.animID;
             const ancs = this.animParams.ancs;
 
-            if (ancs !== null && ancs.characters.length > charID) {
-                const model = ancs.characters[charID].model;
-                if (model !== null)
-                    return model;
+            if (ancs !== null && ancs.characterSet.length > charID) {
+                const character = ancs.characterSet[charID];
+                const model = character.model;
+                if (model !== null) {
+                    if (animID !== -1) {
+                        const animName = character.animNames[animID];
+                        const anim = ancs.animationSet.animations.find(v => v.name == animName);
+                        const metaAnim = anim?.animation;
+                        if (metaAnim) {
+                            return { cmdl: model, animationData: {
+                                cskr: assertExists(model.cskr),
+                                cinf: assertExists(character.skel),
+                                metaAnim: metaAnim,
+                                animSysContext: new AnimSysContext(ancs.animationSet.transitionDatabase, resourceSystem)}};
+                        }
+                    }
+                    return { cmdl: model, animationData: null };
+                }
             } 
         }
 
         if (this.char !== null && this.char.cmdl !== null)
-            return this.char.cmdl;
+            return { cmdl: this.char.cmdl, animationData: null };
 
-        return this.model;
+        return { cmdl: this.model, animationData: null };
     }
 }
 

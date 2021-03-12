@@ -7,12 +7,15 @@ import { ResourceSystem } from "./resource";
 import { Geometry, MaterialSet, parseGeometry, parseMaterialSet, GameVersion } from "./mrea";
 import { AABB } from "../Geometry";
 import { InputStream } from "./stream";
+import { ANIM } from "./anim";
+import { CSKR } from "./cskr";
 
 export interface CMDL {
     bbox: AABB;
     assetID: string;
     materialSets: MaterialSet[];
     geometry: Geometry;
+    cskr: CSKR | null;
 }
 
 enum ModelVersion {
@@ -43,7 +46,7 @@ function modelVersionToGameVersion(modelVersion: ModelVersion): GameVersion {
         throw "whoops";
 }
 
-export function parse(stream: InputStream, resourceSystem: ResourceSystem, assetID: string): CMDL {
+export function parse(stream: InputStream, resourceSystem: ResourceSystem, assetID: string, loadDetails?: {cskrId: string}): CMDL {
     const magic = stream.readUint32();
     let version: number;
     
@@ -110,8 +113,19 @@ export function parse(stream: InputStream, resourceSystem: ResourceSystem, asset
 
     const hasPosShort = (!!(flags & Flags.POS_SHORT));
     const hasUVShort = (!!(flags & Flags.UV_SHORT) || version === ModelVersion.DKCR);
-    let geometry;
-    [geometry, dataSectionIndex] = parseGeometry(stream, materialSets[0], dataSectionOffsTable, hasPosShort, hasUVShort, version >= ModelVersion.MP2, version >= ModelVersion.DKCR, dataSectionIndex, -1);
 
-    return { bbox, assetID, materialSets, geometry };
+    // If loaded via ANCS, MP1 CSKRs are also loaded to generate PNMTXIDX envelopes during geometry parsing.
+    // MP2 and MP3 CSKRs are loaded because they contain pre-generated PNMTXIDX envelopes.
+    let cskr: CSKR | null = null;
+    const cskrId = loadDetails?.cskrId;
+    if (cskrId) {
+        const cskrObj = resourceSystem.loadAssetByID<CSKR>(cskrId, "CSKR");
+        if (cskrObj)
+            cskr = cskrObj
+    }
+
+    let geometry;
+    [geometry, dataSectionIndex] = parseGeometry(stream, materialSets[0], dataSectionOffsTable, hasPosShort, hasUVShort, version >= ModelVersion.MP2, version >= ModelVersion.DKCR, dataSectionIndex, -1, cskr);
+
+    return { bbox, assetID, materialSets, geometry, cskr };
 }

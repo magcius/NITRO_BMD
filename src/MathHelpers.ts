@@ -24,7 +24,7 @@ export const Vec3NegZ: ReadonlyVec3  = vec3.fromValues(0, 0, -1);
 /**
  * Computes a model matrix {@param dst} from given SRT parameters. Rotation is assumed
  * to be in radians.
- * 
+ *
  * This is roughly equivalent to {@link mat4.fromTranslationRotationScale}, but no intermediate
  * to quaternions is necessary.
  */
@@ -56,7 +56,7 @@ export function computeModelMatrixSRT(dst: mat4, scaleX: number, scaleY: number,
 
 /**
  * Computes a model matrix {@param dst} from given scale parameters.
- * 
+ *
  * This is equivalent to {@link computeModelMatrixSRT} with the rotation parameters set to 0 and the translation set to 0.
  */
 export function computeModelMatrixS(dst: mat4, scaleX: number, scaleY: number = scaleX, scaleZ: number = scaleX): void {
@@ -84,7 +84,7 @@ export function computeModelMatrixS(dst: mat4, scaleX: number, scaleY: number = 
 /**
  * Computes a model matrix {@param dst} from given rotation parameters. Rotation is assumed
  * to be in radians.
- * 
+ *
  * This is equivalent to {@link computeModelMatrixSRT} with the scale parameters set to 1 and the translation set to 0.
  */
 export function computeModelMatrixR(dst: mat4, rotationX: number, rotationY: number, rotationZ: number): void {
@@ -115,7 +115,7 @@ export function computeModelMatrixR(dst: mat4, rotationX: number, rotationY: num
 
 /**
  * Computes a model matrix {@param dst} from given translation parameters.
- * 
+ *
  * This is equivalent to {@link computeModelMatrixSRT} with the rotation parameters set to 0, and the scale set to 1.
  */
 export function computeModelMatrixT(dst: mat4, translationX: number, translationY: number, translationZ: number): void {
@@ -171,7 +171,7 @@ export function scaleMatrix(dst: mat4, m: ReadonlyMat4, scaleX: number, scaleY: 
 
 /**
  * Computes a normal matrix into {@param dst} from model-view matrix {@param m}.
- * 
+ *
  * If the model matrix is uniformly scaled, or you do not care about artifacts
  * resulting from incorrect normal vectors, then pass true to {@param isUniformScale}.
  * This skips a potentially expensive computation with inverting and transposing
@@ -229,7 +229,7 @@ export function transformVec3Mat4w0(dst: vec3, m: ReadonlyMat4, v: ReadonlyVec3)
 
 const scratchVec3 = vec3.create();
 
-function compareEpsilon(a: number, b: number) {
+export function compareEpsilon(a: number, b: number) {
     return Math.abs(a-b) <= MathConstants.EPSILON*Math.max(1, Math.abs(a), Math.abs(b));
 }
 
@@ -617,4 +617,12 @@ export function vec3QuantizeMajorAxis(dst: vec3, m: vec3): void {
 
 export function vec3SetAll(dst: vec3, v: number): void {
     vec3.set(dst, v, v, v);
+}
+
+export function square(a: number): number {
+    return a * a
+}
+
+export function randomRange(a: number, b = -a): number {
+    return lerp(a, b, Math.random());
 }

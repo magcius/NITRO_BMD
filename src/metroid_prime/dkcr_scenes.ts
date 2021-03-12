@@ -2,7 +2,7 @@
 import * as PAK from './pak';
 import * as MLVL from './mlvl';
 import * as MREA from './mrea';
-import { ResourceSystem } from './resource';
+import { ResourceGame, ResourceSystem } from './resource';
 import { MREARenderer, RetroTextureHolder } from './render';
 
 import * as Viewer from '../viewer';
@@ -30,9 +30,9 @@ class DKCRSceneDesc implements Viewer.SceneDesc {
         const dataFetcher = context.dataFetcher;
         return dataFetcher.fetchData(`dkcr/${this.filename}`).then((buffer: ArrayBufferSlice) => {
             const levelPak = PAK.parse(buffer, PAK.CompressionMethod.CMPD_ZLIB);
-            const resourceSystem = new ResourceSystem([levelPak], null);
+            const resourceSystem = new ResourceSystem(ResourceGame.DKCR, [levelPak], null);
             for (const mlvlEntry of levelPak.namedResourceTable.values()) {
-                if (this.worldName.length !== 0 && this.worldName != mlvlEntry.name) continue;
+                if (this.worldName.length !== 0 && this.worldName !== mlvlEntry.name) continue;
                 const mlvl: MLVL.MLVL = assertExists(resourceSystem.loadAssetByID<MLVL.MLVL>(mlvlEntry.fileID, 'MLVL'));
                 assert(mlvl.areaTable.length === 1);
                 const area: MLVL.Area = mlvl.areaTable[0];
@@ -41,7 +41,7 @@ class DKCRSceneDesc implements Viewer.SceneDesc {
                 const renderer = new DKCRSceneRenderer(device, mlvl, textureHolder);
                 colorFromRGBA(renderer.worldAmbientColor, 0.5, 0.5, 0.5, 1.0);
                 const cache = renderer.renderHelper.getCache();
-                const mreaRenderer = new MREARenderer(device, renderer.modelCache, cache, renderer.textureHolder, this.name, mrea);
+                const mreaRenderer = new MREARenderer(device, renderer.modelCache, cache, renderer.textureHolder, this.name, mrea, resourceSystem);
                 renderer.areaRenderers.push(mreaRenderer);
                 return renderer;
             }

@@ -475,6 +475,14 @@ export const enum AttrType {
     DIRECT = 1,
     INDEX8 = 2,
     INDEX16 = 3,
+
+    // Used when loading MP1 data to generate *MTXIDX attribute data.
+    // Does not consume input from display list and writes the index from Attr.POS
+    // instead (DIRECT Attr.POS will throw exception).
+    //
+    // A post-load relocation pass is necessary to resolve these position indices
+    // into envelope matrix slots.
+    GENERATED_MTXIDX = 4,
 }
 
 export const enum TexMapID {
