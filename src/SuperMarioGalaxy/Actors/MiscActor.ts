@@ -4580,7 +4580,7 @@ export class Trapeze extends LiveActor {
         this.ddraw.texCoord2f32(GX.Attr.TEX0, 1.0, 0.7 + txc1);
 
         this.ddraw.end();
-        
+
         // Rope 3.
         this.ddraw.begin(GX.Command.DRAW_TRIANGLE_STRIP);
 
@@ -5780,7 +5780,7 @@ export class Flag extends LiveActor {
                 colorFromRGBA8(scratchColor, this.colors[this.getColorIdx(i - 1, j + 1)]);
                 this.ddraw.color4color(GX.Attr.CLR0, scratchColor);
                 this.ddraw.texCoord2f32(GX.Attr.TEX0, txS, txT0);
-    
+
                 this.ddraw.position3vec3(sp1.position);
                 colorFromRGBA8(scratchColor, this.colors[this.getColorIdx(i, j + 1)]);
                 this.ddraw.color4color(GX.Attr.CLR0, scratchColor);
